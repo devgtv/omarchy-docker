@@ -44,6 +44,7 @@ function parseSizeToBytes(text) {
 function formatBytes(bytes) {
   var n = Number(bytes)
   if (!isFinite(n) || n < 0) n = 0
+  if (n >= 1099511627776) return (Math.round(n / 1099511627776 * 10) / 10) + " TiB"
   if (n >= 1073741824) return (Math.round(n / 1073741824 * 10) / 10) + " GiB"
   if (n >= 1048576) return (Math.round(n / 1048576 * 10) / 10) + " MiB"
   if (n >= 1024) return (Math.round(n / 1024 * 10) / 10) + " KiB"

@@ -1,0 +1,32 @@
+#!/bin/bash
+#
+# Aggregated test runner for the Omarchy Control Docker plugin.
+# Runs unit, manifest and integration tests, continuing past failures so
+# every file gets its runtime coverage.
+
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+TEST_DIR="$ROOT/test"
+
+failed=0
+
+run() {
+  local label="$1"
+  shift
+  printf '==> %s\n' "$label"
+  if ! "$@"; then
+    failed=1
+  fi
+}
+
+run "Model.js unit tests (node)" node "$TEST_DIR/model.test.js"
+run "Manifest and shell contract" bash "$TEST_DIR/manifest.test.sh"
+run "Integration against docker daemon" bash "$TEST_DIR/integration.test.sh"
+
+if [[ $failed -ne 0 ]]; then
+  printf '\nSome tests failed.\n' >&2
+  exit 1
+fi
+
+printf '\nAll tests passed.\n'

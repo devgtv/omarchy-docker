@@ -24,7 +24,7 @@ var snapshotScript = [
 ].join("\n")
 
 function parseSizeToBytes(text) {
-  var m = /([\d.]+)\s*([KMGT]?i?B)/i.exec(String(text || "").trim())
+  var m = /^(\d+(?:\.\d+)?)\s*([KMGT]?i?B)$/i.exec(String(text || "").trim())
   if (!m) return 0
   var value = parseFloat(m[1])
   if (!isFinite(value)) return 0

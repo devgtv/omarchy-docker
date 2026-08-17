@@ -64,6 +64,16 @@ Panel {
     memOverrides = next
   }
 
+  // Drops pending overrides for containers that are no longer listed, so a
+  // removed container cannot keep a stale limit preview behind in the slider.
+  function pruneOverrides(names) {
+    var next = {}
+    for (var key in memOverrides) {
+      if (names.indexOf(key) >= 0) next[key] = memOverrides[key]
+    }
+    if (Object.keys(next).length !== Object.keys(memOverrides).length) memOverrides = next
+  }
+
   function refresh() {
     if (!refreshProc.running) refreshProc.running = true
   }
@@ -171,6 +181,7 @@ Panel {
         root.dockerVersion = snap.dockerVersion
         root.hostMemBytes = snap.hostMemBytes
         root.containers = snap.containers
+        root.pruneOverrides(snap.containers.map(function(c) { return c.name }))
       }
     }
   }

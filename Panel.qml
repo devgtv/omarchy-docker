@@ -31,7 +31,9 @@ Panel {
   // Queue of pending `docker update` jobs: [{name, mb}]. One Process at a time.
   property var pendingSets: []
 
-  readonly property int refreshMs: setting("refreshMs", 3000)
+  // Floor guards against a misconfigured refreshMs (0/negative would hammer
+  // the daemon in a tight timer loop).
+  readonly property int refreshMs: Math.max(500, setting("refreshMs", 3000))
   readonly property int hostMemMb: Math.max(1024, Math.round(hostMemBytes / 1048576))
   readonly property int memMin: 128
   readonly property int memStep: 128

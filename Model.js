@@ -63,9 +63,9 @@ function formatMb(mb) {
 function clampMemMb(mb, maxMb) {
   var n = Math.round(Number(mb))
   var max = Math.round(Number(maxMb))
-  if (!isFinite(n)) n = 128
-  if (!isFinite(max) || max < 128) max = 128
-  return Math.max(128, Math.min(max, n))
+  if (!isFinite(n)) n = 6
+  if (!isFinite(max) || max < 6) max = 6
+  return Math.max(6, Math.min(max, n))
 }
 
 function parseSnapshot(text) {

@@ -34,8 +34,8 @@ Panel {
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
   readonly property int refreshMs: Math.max(500, setting("refreshMs", 3000))
-  readonly property int hostMemMb: Math.max(1024, Math.round(hostMemBytes / 1048576))
-  readonly property int memMin: 128
+  readonly property int hostMemMb: Math.max(16384, Math.round(hostMemBytes / 1048576))
+  readonly property int memMin: 6
   readonly property int memStep: 128
 
   function containerLimitMb(c) {

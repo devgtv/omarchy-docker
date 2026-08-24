@@ -75,14 +75,14 @@ assertEqual(Model.formatMb(NaN), "0 MiB", "formatMb clamps NaN")
 // clampMemMb
 // ---------------------------------------------------------------------------
 
-assertEqual(Model.clampMemMb(10, 8192), 128, "clampMemMb raises below minimum")
+assertEqual(Model.clampMemMb(3, 8192), 6, "clampMemMb raises below minimum")
 assertEqual(Model.clampMemMb(99999, 8192), 8192, "clampMemMb lowers above maximum")
 assertEqual(Model.clampMemMb(2048, 8192), 2048, "clampMemMb keeps in-range values")
 assertEqual(Model.clampMemMb(2048.6, 8192), 2049, "clampMemMb rounds to whole MiB")
-assertEqual(Model.clampMemMb("abc", 8192), 128, "clampMemMb falls back for NaN input")
-assertEqual(Model.clampMemMb(512, 64), 128, "clampMemMb survives a maximum below minimum")
-assertEqual(Model.clampMemMb(512, "abc"), 128, "clampMemMb falls back for NaN maximum")
-assertEqual(Model.clampMemMb(128, 128), 128, "clampMemMb handles equal bounds")
+assertEqual(Model.clampMemMb("abc", 8192), 6, "clampMemMb falls back for NaN input")
+assertEqual(Model.clampMemMb(512, 4), 6, "clampMemMb survives a maximum below minimum")
+assertEqual(Model.clampMemMb(512, "abc"), 6, "clampMemMb falls back for NaN maximum")
+assertEqual(Model.clampMemMb(6, 6), 6, "clampMemMb handles equal bounds")
 
 // ---------------------------------------------------------------------------
 // parseSnapshot

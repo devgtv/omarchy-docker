@@ -49,6 +49,7 @@ else process.exit(3)
       assert.equal(call.host, undefined)
     }
     assert.equal(daemonCalls.find(call => call.args[2] === "stats").args.at(-1), "abc123")
+    assert.equal(daemonCalls.find(call => call.args[2] === "inspect").args[4], Model.inspectFormat)
     console.log("ok - snapshot freezes " + kind + " target " + value)
   }
 } finally {

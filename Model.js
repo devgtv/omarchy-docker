@@ -5,9 +5,12 @@
 //   ==TARGET==     selector kind, selector value, daemon endpoint (one per line)
 //   ==DOCKER==     daemon version or "unavailable"
 //   ==HOST==       host total RAM in bytes
-//   ==CONTAINERS== one line per container: id|name|image|status|memLimitBytes
+//   ==CONTAINERS== id|name|image|status|memLimitBytes|JSON metadata
 //   ==STATS==      one line per container: name|cpuPerc|memUsage|memPerc
-// "|" is a safe separator: container/image names cannot contain "|".
+// Only the first five separators are structural. Metadata is JSON encoded,
+// preserving pipes, newlines and Unicode in labels, paths and error messages.
+// Project only the fields we display: never emit environment or health logs.
+var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}}}'
 var snapshotScript = [
   "kind=context",
   "target=${DOCKER_CONTEXT:-}",
@@ -30,7 +33,7 @@ var snapshotScript = [
   "ids=$(docker_cmd ps -aq 2>/dev/null)",
   "rows=",
   "if [ -n \"$ids\" ]; then",
-  "  rows=$(docker_cmd inspect --format '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}' $ids 2>/dev/null)",
+  "  rows=$(docker_cmd inspect --format '" + inspectFormat + "' $ids 2>/dev/null)",
   "  printf '%s\\n' \"$rows\"",
   "fi",
   "echo '==STATS=='",
@@ -141,6 +144,92 @@ function hostMemoryMb(bytes) {
   return isFinite(n) && n > 0 ? Math.max(6, Math.floor(n / 1048576)) : 6
 }
 
+function metadata(text) {
+  var data = {}
+  try { data = JSON.parse(text) || {} } catch (error) { /* older snapshots */ }
+  function string(value) { return typeof value === "string" ? value : "" }
+  return {
+    health: ["healthy", "unhealthy", "starting"].indexOf(data.health) >= 0 ? data.health : "",
+    project: string(data.project), service: string(data.service),
+    ports: data.ports && typeof data.ports === "object" && !Array.isArray(data.ports) ? data.ports : {},
+    mounts: Array.isArray(data.mounts) ? data.mounts.filter(function(m) { return m && typeof m === "object" }) : [],
+    startedAt: string(data.startedAt), finishedAt: string(data.finishedAt),
+    exitCode: typeof data.exitCode === "number" && isFinite(data.exitCode) ? data.exitCode : null,
+    oomKilled: data.oomKilled === true, error: string(data.error)
+  }
+}
+
+// Keep filtering/grouping purely presentational: no hidden Docker operations.
+function visibleContainers(containers, query, state, project, grouped) {
+  var terms = String(query || "").trim().toLowerCase().split(/\s+/).filter(function(t) { return t !== "" })
+  var result = containers.filter(function(c) {
+    if (state && state !== "all" && (state === "stopped" ? ["created", "exited"].indexOf(c.status) < 0 : c.status !== state)) return false
+    if (project && c.project !== project) return false
+    var text = [c.name, c.image, c.status, c.project, c.service, c.health, c.fullId].join(" ").toLowerCase()
+    return terms.every(function(term) { return text.indexOf(term) >= 0 })
+  })
+  if (grouped) result.sort(function(a, b) {
+    var ap = a.project || "", bp = b.project || ""
+    if (ap !== bp) return ap === "" ? 1 : bp === "" ? -1 : ap < bp ? -1 : 1
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0
+  })
+  return result
+}
+
+function projects(containers) {
+  return containers.map(function(c) { return c.project || "" }).filter(function(p, i, list) { return p !== "" && list.indexOf(p) === i }).sort()
+}
+
+function selectionIndex(previous, next, index) {
+  var id = previous[index] ? previous[index].fullId : ""
+  for (var i = 0; i < next.length; i++) if (next[i].fullId === id) return i
+  return Math.max(0, Math.min(index, next.length - 1))
+}
+
+function portsText(container) {
+  var ports = container.ports || {}
+  return Object.keys(ports).sort().map(function(port) {
+    var bindings = ports[port]
+    // QML may expose nested arrays as QVariantList sequences, for which
+    // Array.isArray is false even though list iteration is supported.
+    if (!bindings || typeof bindings !== "object" || typeof bindings.length !== "number" || bindings.length === 0) return port + " (not published)"
+    return bindings.filter(function(b) { return b && typeof b === "object" }).map(function(b) {
+      var host = String(b.HostIp || "0.0.0.0")
+      if (host.indexOf(":") >= 0) host = "[" + host + "]"
+      return host + ":" + String(b.HostPort || "?") + " → " + port
+    }).join("\n")
+  }).join("\n")
+}
+
+function uptimeText(container, now) {
+  var start = Date.parse(container.startedAt || "")
+  var elapsed = Math.floor((now - start) / 1000)
+  if (container.status !== "running" || !isFinite(elapsed) || elapsed < 0 || start <= 0) return "Unavailable"
+  if (elapsed < 60) return elapsed + "s"
+  if (elapsed < 3600) return Math.floor(elapsed / 60) + "m"
+  if (elapsed < 86400) return Math.floor(elapsed / 3600) + "h " + Math.floor(elapsed % 3600 / 60) + "m"
+  return Math.floor(elapsed / 86400) + "d " + Math.floor(elapsed % 86400 / 3600) + "h"
+}
+
+function detailsText(c, now) {
+  var mounts = (c.mounts || []).map(function(m) {
+    return String(m.Type || "mount") + ": " + String(m.Name || m.Source || "") + " → " + String(m.Destination || "") + (m.RW === false ? " (read-only)" : "")
+  }).join("\n")
+  var exit = c.exitCode === null || c.exitCode === undefined ? "Unknown" : String(c.exitCode)
+  return "Image: " + c.image + "\nID: " + c.fullId
+    + "\nCompose project: " + (c.project || "None") + "\nCompose service: " + (c.service || "None")
+    + "\nHealth: " + (c.health || "No healthcheck") + "\nUptime: " + uptimeText(c, now)
+    + "\nStarted: " + (c.startedAt || "Unavailable") + "\nFinished: " + (c.finishedAt || "Unavailable")
+    + "\nLast exit code: " + exit + (c.oomKilled ? " (OOM killed)" : "")
+    + "\nRuntime error: " + (c.error || "None reported")
+    + "\nPorts:\n" + (portsText(c) || "None") + "\nMounts:\n" + (mounts || "None")
+}
+
+function clipboardCommand(text) {
+  // Constant program; data is a positional argument, never shell source.
+  return ["bash", "-o", "pipefail", "-c", 'printf "%s" "$1" | wl-copy', "docker-plugin-copy", String(text)]
+}
+
 function parseSnapshot(text) {
   var result = {
     dockerAvailable: false,
@@ -198,7 +287,8 @@ function parseSnapshot(text) {
     var name = String(cp[1] || "").trim().replace(/^\//, "")
     var limit = parseInt(String(cp[4] || "").trim(), 10)
     var stats = statsByName[name] || null
-    result.containers.push({
+    var extra = metadata(cp.slice(5).join("|"))
+    result.containers.push(Object.assign(extra, {
       id: String(cp[0] || "").trim().substring(0, 12),
       fullId: String(cp[0] || "").trim(),
       name: name,
@@ -208,7 +298,7 @@ function parseSnapshot(text) {
       cpuPercent: stats ? stats.cpuPercent : "",
       memUsageBytes: stats ? stats.memUsageBytes : 0,
       memPercent: stats ? stats.memPercent : ""
-    })
+    }))
   }
 
   return result
@@ -217,6 +307,14 @@ function parseSnapshot(text) {
 if (typeof module !== "undefined") {
   module.exports = {
     snapshotScript: snapshotScript,
+    inspectFormat: inspectFormat,
+    visibleContainers: visibleContainers,
+    projects: projects,
+    selectionIndex: selectionIndex,
+    portsText: portsText,
+    uptimeText: uptimeText,
+    detailsText: detailsText,
+    clipboardCommand: clipboardCommand,
     validTarget: validTarget,
     dockerCommand: dockerCommand,
     targetLabel: targetLabel,

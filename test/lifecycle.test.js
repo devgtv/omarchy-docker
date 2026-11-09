@@ -43,6 +43,7 @@ const ctx = vm.createContext({Model, Qt: {callLater(fn) { fn() }}, dockerAvailab
   memDebounce: {running: false, restart() { this.running = true }}
 })
 ctx.root = ctx
+Object.defineProperty(ctx, "visibleContainers", {get() { return ctx.containers }})
 Object.defineProperty(ctx, "controlsBusy", {get() {
   return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.activeSet !== null || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.activeAction !== null || ctx.pendingAction !== null
 }})
@@ -101,6 +102,8 @@ async function main() {
     for (let i = 0; i < 2; i++) {
       const id = docker(["create", "--name", "docker-plugin-test-" + runId + "-" + i,
         "--label", label + "=" + runId, "--network", "none", "--read-only",
+        "--label", "com.docker.compose.project=disposable-test", "--label", "com.docker.compose.service=worker-" + i,
+        "--health-cmd", i === 0 ? "true" : "false", "--health-interval", "1s", "--health-timeout", "1s", "--health-retries", "1", "--expose", "8080/tcp",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "32",
         ...(i === 0 ? ["--memory", "64m", "--memory-swap", "64m"] : []), image, "sh", "-c", workload]).trim()
       assert(/^[a-f0-9]{64}$/.test(id))
@@ -124,6 +127,19 @@ async function main() {
     action("start", created[1])
     assert(ctx.containers.every(c => c.status === "running" && c.cpuPercent !== ""))
     ok("snapshot collects real resource stats for multiple running containers")
+    for (let tries = 0; tries < 10 && !ctx.containers.every(c => c.health === (c.fullId === created[0] ? "healthy" : "unhealthy")); tries++) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      sync()
+    }
+    for (const c of ctx.containers) {
+      assert.equal(c.project, "disposable-test")
+      assert.equal(c.service, "worker-" + created.indexOf(c.fullId))
+      assert.equal(c.health, c.fullId === created[0] ? "healthy" : "unhealthy")
+      assert.match(Model.portsText(c), /8080\/tcp \(not published\)/)
+      assert.match(c.startedAt, /^\d{4}-/)
+      assert.equal(c.exitCode, 0)
+    }
+    ok("real inspect projects Compose labels, health, ports and timestamps without extra daemon calls")
 
     memory(created[0], 128)
     assert.equal(inspect(created[1]).HostConfig.Memory, 0)

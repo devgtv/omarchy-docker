@@ -127,17 +127,26 @@ Panel {
     var job = pendingSets[0]
     pendingSets = pendingSets.slice(1)
     activeSet = job
+    activeSet.phase = "swap"
     mutationRevision += 1
-    setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.id])
+    // Some runc/cgroup configurations reject a combined increase when the old
+    // memory+swap limit is below the new RAM limit. Relax swap first.
+    setProc.command = Model.dockerCommand(job.target, ["update", "--memory-swap", "-1", job.id])
     setProc.running = true
   }
 
   function finishSet(exitCode, exitStatus, errorText) {
     var job = activeSet
-    activeSet = null
     if (!job) return
+    if (exitCode === 0 && exitStatus === 0 && job.phase === "swap") {
+      job.phase = "memory"
+      setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", job.id])
+      setProc.running = true
+      return
+    }
+    activeSet = null
     if (exitCode !== 0 || exitStatus !== 0)
-      actionError = "Could not update " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
+      actionError = "Could not update " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode) + (job.phase === "memory" ? " (swap was already set to unlimited)" : "")
     var queued = pendingSets.some(function(item) { return item.name === job.name })
     if (!queued && keyboardEdits[job.name] === undefined) clearOverride(job.name)
     startNextSet()
@@ -330,6 +339,7 @@ Panel {
 
   KeyboardPanel {
     id: panel
+    objectName: "dockerTestPanel"
     anchorItem: button
     owner: root
     bar: root.bar
@@ -340,6 +350,7 @@ Panel {
 
     PanelKeyCatcher {
       id: keyCatcher
+      objectName: "dockerKeyCatcher"
       anchors.fill: parent
       blocked: root.pendingAction !== null
       onMoveRequested: function(dx, dy) {
@@ -360,6 +371,7 @@ Panel {
 
       ScrollView {
         id: scrollArea
+        objectName: "dockerScrollArea"
         anchors.fill: parent
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -481,6 +493,7 @@ Panel {
 
             delegate: CursorSurface {
               id: containerRow
+              objectName: "dockerRow-" + container.fullId
               required property var modelData
               required property int index
 
@@ -638,6 +651,7 @@ Panel {
                 // Row 4: RAM slider
                 PanelSlider {
                   id: ramSlider
+                  objectName: "dockerMemory-" + containerRow.container.fullId
                   visible: containerRow.container.status === "running"
                   enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && !actionProc.running && root.pendingAction === null
                   bar: root.bar
@@ -695,6 +709,7 @@ Panel {
 
       Item {
         id: confirmationKeys
+        objectName: "dockerConfirmationKeys"
         anchors.fill: parent
         visible: root.pendingAction !== null
         z: 20
@@ -708,6 +723,7 @@ Panel {
         }
         ConfirmDialog {
           id: actionConfirm
+          objectName: "dockerActionConfirm"
           anchors.fill: parent
           opened: root.pendingAction !== null
           message: root.pendingAction ? "Confirm " + root.pendingAction.action + " for " + root.pendingAction.name + "?\n" + Model.targetLabel(root.pendingAction.target) + "\nStarting may execute the container workload; stopping or restarting may interrupt services." : ""

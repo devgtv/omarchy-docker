@@ -33,8 +33,13 @@ function test(name, body) {
   console.log("ok - " + name)
 }
 function finish(code = 0, status = 0, message = "") {
+  const job = ctx.activeSet
   ctx.setProc.running = false
   ctx.finishSet(code, status, message)
+  if (code === 0 && status === 0 && ctx.activeSet === job && job.phase === "memory") {
+    ctx.setProc.running = false
+    ctx.finishSet(0, 0, "")
+  }
 }
 
 test("controller retains the in-flight job identity explicitly", () => {
@@ -182,6 +187,19 @@ test("recent and follow logs launch independently without blocking the panel", (
   assert.equal(launched[1].includes("--follow"), true)
   assert.equal(launched[0].at(-1), "a".repeat(64))
   assert.equal(ctx.controlsBusy, false)
+})
+test("RAM updates relax swap before increasing memory", () => {
+  ctx.setMemory("web", 256)
+  assert.deepEqual(Array.from(ctx.setProc.command.slice(-4)), ["update", "--memory-swap", "-1", "a".repeat(64)])
+  const preview = ctx.memOverrides.web
+  ctx.setProc.running = false
+  ctx.finishSet(0, 0, "")
+  assert.equal(ctx.memOverrides.web, preview)
+  assert.deepEqual(Array.from(ctx.setProc.command.slice(-4)), ["update", "--memory", "256m", "a".repeat(64)])
+  ctx.setProc.running = false
+  ctx.finishSet(1, 0, "memory rejected")
+  assert.match(ctx.actionError, /swap was already set to unlimited/)
+  assert.equal(ctx.memOverrides.web, undefined)
 })
 test("log shortcuts respect selection and do not launch behind confirmations", () => {
   ctx.cursorActive = true

@@ -110,9 +110,12 @@ async function main() {
     const first = ctx.containers.find(c => c.fullId === created[0])
     ctx.setMemory(first.name, 128)
     owned(created[0])
-    exec(Array.from(ctx.setProc.command))
-    ctx.setProc.running = false
-    ctx.finishSet(0, 0, "")
+    const job = ctx.activeSet
+    while (ctx.activeSet === job) {
+      exec(Array.from(ctx.setProc.command))
+      ctx.setProc.running = false
+      ctx.finishSet(0, 0, "")
+    }
     assert.equal(inspect(created[0]).HostConfig.Memory, 128 * 1048576)
     assert.equal(inspect(created[1]).HostConfig.Memory, 64 * 1048576)
     ok("controller RAM update uses the full ID and leaves the other container unchanged")

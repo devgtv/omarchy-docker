@@ -70,7 +70,7 @@ Default is 3000 ms.
 ## Implementation details
 
 - Data is collected by a Quickshell `Process` running `docker ps`, `docker inspect` and `docker stats`.
-- The limit change uses `docker update --memory <MB>m --memory-swap -1 <container>`.
+- A limit change first runs `docker update --memory-swap -1 <container>`, then `docker update --memory <MB>m <container>`. Preparing swap separately avoids runtime errors when increasing RAM beyond a previous memory+swap limit. If the second step fails, swap remains unlimited and the error explicitly reports that partial change.
 - The user needs access to the selected Docker daemon (for example via the `docker` group or rootless Docker). Membership in the `docker` group effectively grants root-level access; this plugin does not elevate privileges.
 
 ## Testing Model.js locally

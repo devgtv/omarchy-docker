@@ -112,6 +112,7 @@ assertEqual(full.dockerVersion, "29.7.2", "parseSnapshot keeps daemon version")
 assertEqual(full.hostMemBytes, 16766789632, "parseSnapshot parses host RAM")
 assertEqual(full.containers.length, 2, "parseSnapshot parses all containers")
 assertEqual(full.containers[0].id, "abcd1234ef56", "parseSnapshot truncates ids to 12 chars")
+assertEqual(full.containers[0].fullId, "abcd1234ef5678901234", "parseSnapshot also retains the original ID")
 assertEqual(full.containers[0].name, "web-app", "parseSnapshot strips leading slash from names")
 assertEqual(full.containers[0].status, "running", "parseSnapshot keeps container status")
 assertEqual(full.containers[0].memLimitBytes, 536870912, "parseSnapshot parses configured limit")
@@ -177,6 +178,21 @@ assertEqual(Model.dockerCommand(null, ["stop", "abc"]), [], "dockerCommand refus
 assertEqual(Model.dockerCommand({kind: "invalid", value: "test"}, []), [], "dockerCommand refuses invalid selector kinds")
 assertEqual(Model.dockerCommand({kind: "context", value: "bad\ncontext"}, []), [], "dockerCommand refuses control characters")
 assertEqual(Model.dockerCommand(remote, ["version"]), ["env", "-u", "DOCKER_CONTEXT", "-u", "DOCKER_HOST", "docker", "--context", "production", "version"], "dockerCommand pins target and clears inherited selectors")
+
+const exited = {fullId: "a".repeat(64), status: "exited"}
+const running = {fullId: "b".repeat(64), status: "running"}
+assert(Model.canContainerAction("start", exited), "exited containers can be started")
+assert(!Model.canContainerAction("stop", exited), "exited containers cannot be stopped")
+assert(!Model.canContainerAction("start", running), "running containers cannot be started")
+assert(Model.canContainerAction("stop", running), "running containers can be stopped")
+assert(Model.canContainerAction("restart", running), "running containers can be restarted")
+assertEqual(Model.containerActionCommand(remote, "rm", running), [], "lifecycle commands reject destructive operations outside the whitelist")
+assertEqual(Model.containerActionCommand(remote, "start", {fullId: "web", status: "exited"}), [], "lifecycle commands require full immutable container IDs")
+assertEqual(Model.containerActionCommand(remote, "start", exited).slice(-3), ["start", "--", "a".repeat(64)], "start command uses full ID and an option terminator")
+assertEqual(Model.containerActionCommand(null, "start", exited), [], "lifecycle commands fail closed without a target")
+for (const status of ["paused", "restarting", "dead", "removing"]) {
+  assert(!Model.canContainerAction("restart", {fullId: "a".repeat(64), status}), "unsupported state " + status + " is read-only")
+}
 
 console.log(`\n${passes} passed, ${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

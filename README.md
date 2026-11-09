@@ -1,13 +1,13 @@
 # Omarchy Control Docker
 
-`devgtv.docker` — bar widget for the Omarchy Shell (Quickshell) that shows running Docker containers and lets you control the RAM limit of each one.
+`devgtv.docker` — bar widget for the Omarchy Shell (Quickshell) that lists Docker containers, controls their lifecycle and adjusts running containers' RAM limits.
 
 ![preview](preview.png)
 
 ## What it does
 
 - Adds a Docker icon to the bar.
-- Click the icon to open a popup with the running containers and their resource usage.
+- Click the icon to open a popup with running and stopped containers. Resource stats and RAM sliders are shown for running containers.
 - For each container you can see its status, CPU and used memory.
 - A slider sets the RAM limit of the selected container (`docker update --memory ... --memory-swap -1`).
 - The popup auto-refreshes every 3 seconds.
@@ -41,9 +41,13 @@ omarchy plugin remove devgtv.docker
   - `j`/`k` move between containers
   - `h`/`l` adjust the RAM limit (300 ms debounce)
   - `r` force refresh
+  - `s` request start/stop for the selected container
+  - `Shift+r` request restart for the selected running container
   - `Esc` close
 - The slider range goes from 6 MiB up to the Docker daemon's total RAM, including remote contexts. Keyboard and wheel adjustments use 128 MiB steps. If RAM cannot be detected, only the 6 MiB minimum is available.
 - Failed RAM updates show the Docker error in the popup. Rapid edits are queued per container, even if you change selection before the keyboard debounce finishes.
+- Start is available for created/exited containers; stop and restart are available for running containers. Other states remain read-only. Every lifecycle action asks for confirmation, showing the container and Docker target. Cancel is selected by default; use arrows or Tab to select Confirm, then Enter. Escape cancels. Closing the panel also cancels an unconfirmed action.
+- Lifecycle actions and RAM updates do not run concurrently. Commands use full container IDs, so replacing a container with another of the same name does not redirect an already captured action. Successful operations refresh the list; failures appear in the popup. Starting runs the container workload, and stopping/restarting may interrupt services.
 - Changing a limit also sets `--memory-swap -1` (unlimited swap, not disabled swap). Lowering memory can cause a container's workload to be killed by the kernel's out-of-memory handler. Changes affect the selected Docker context, which may be remote.
 
 ## Configuration

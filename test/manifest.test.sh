@@ -79,7 +79,7 @@ done
 if [[ -z $SHELL_DIR ]]; then
   echo "ok - omarchy shell source not found; skipping QML contract check"
 else
-  for component in Panel KeyboardPanel PanelKeyCatcher PanelSlider PanelSeparator CursorSurface BarIconButton; do
+  for component in Panel KeyboardPanel PanelKeyCatcher PanelSlider PanelSeparator CursorSurface BarIconButton Button ConfirmDialog; do
     if [[ -f $SHELL_DIR/Ui/$component.qml ]]; then
       echo "ok - shell provides Ui/$component.qml"
     else

@@ -51,7 +51,7 @@ omarchy plugin remove devgtv.docker
 - Failed RAM updates show the Docker error in the popup. Rapid edits are queued per container, even if you change selection before the keyboard debounce finishes.
 - Start is available for created/exited containers; stop and restart are available for running containers. Other states remain read-only. Every lifecycle action asks for confirmation, showing the container and Docker target. Cancel is selected by default; use arrows or Tab to select Confirm, then Enter. Escape cancels. Closing the panel also cancels an unconfirmed action.
 - Lifecycle actions and RAM updates do not run concurrently. Commands use full container IDs, so replacing a container with another of the same name does not redirect an already captured action. Successful operations refresh the list; failures appear in the popup. Starting runs the container workload, and stopping/restarting may interrupt services.
-- Logs are available for stopped containers too, subject to the Docker logging driver. The selected Docker target and full container ID are passed directly as arguments; no container name is interpolated into a shell command. Follow mode uses `docker logs --follow`; press Ctrl+C to stop following. The launcher requests that the terminal stay open after completion (`--hold`, if supported). Docker/logging-driver errors are displayed in that terminal; terminal-launch failures are logged by Quickshell. Logs may contain secrets: inspect them before sharing.
+- Logs are available for stopped containers too, subject to the Docker logging driver. The selected Docker target and full container ID are passed as quoted positional arguments to a constant Bash wrapper; no container name is interpolated into the shell program. Follow mode uses `docker logs --follow`; press Ctrl+C to stop following. After completion the exit status is shown and the terminal waits for Enter, including terminals whose desktop entries ignore `--hold`. Docker/logging-driver errors are displayed in that terminal; terminal-launch failures are logged by Quickshell. Logs may contain secrets: inspect them before sharing.
 - Changing a limit also sets `--memory-swap -1` (unlimited swap, not disabled swap). Lowering memory can cause a container's workload to be killed by the kernel's out-of-memory handler. Changes affect the selected Docker context, which may be remote.
 
 ## Configuration
@@ -70,7 +70,7 @@ Default is 3000 ms.
 ## Implementation details
 
 - Data is collected by a Quickshell `Process` running `docker ps`, `docker inspect` and `docker stats`.
-- The limit change uses `docker update --memory <MB>m --memory-swap -1 <container>`.
+- A limit change first applies `--memory <MB>m --memory-swap <2×MB>m`, then lifts the temporary swap bound with `--memory-swap -1`. Applying a finite valid pair first avoids runtime errors observed when increasing RAM directly to unlimited swap. If the second step fails, the RAM change and temporary combined memory+swap limit remain applied; the popup explicitly reports that partial change.
 - The user needs access to the selected Docker daemon (for example via the `docker` group or rootless Docker). Membership in the `docker` group effectively grants root-level access; this plugin does not elevate privileges.
 
 ## Testing Model.js locally
@@ -80,6 +80,35 @@ Run the regression suite (Node.js and Bash; live Docker integration skips when n
 ```bash
 bash test/run
 ```
+
+CI additionally runs `node test/lifecycle.test.js` with
+`DOCKER_PLUGIN_DISPOSABLE_TESTS=1` on its disposable Linux amd64 runner. This
+explicitly opted-in suite pulls a digest-pinned BusyBox image, creates two labeled
+containers without networking/host mounts, exercises the real controller's
+Start/Stop/Restart/RAM commands and recent/live log commands, then removes only
+its own containers. The normal `test/run` remains read-only against a live daemon.
+Do not opt into write tests on production Docker endpoints.
+
+For the opt-in graphical suite on an active Omarchy Wayland session (requires
+QtTest), use a fresh artifact directory. It opens a temporary panel with fake
+Docker data and a fake terminal launcher; it does not replace the installed
+plugin or access a real daemon:
+
+```bash
+DOCKER_PLUGIN_UI_OUTPUT="$(mktemp -d)" bash test/ui/run
+```
+
+To test the real default terminal separately on Hyprland, including output
+retention, targeted Ctrl+C and Enter, run:
+
+```bash
+DOCKER_PLUGIN_TERMINAL_TESTS=1 DOCKER_PLUGIN_UI_OUTPUT="$(mktemp -d)" node test/terminal.test.js
+```
+
+This opens two test terminals with fake Docker output and closes only those test
+windows afterward. Neither local suite changes desktop configuration or uses
+real container logs. Screenshots and runtime logs are saved in the artifact
+directory. Do not interact with the test panel while the graphical suite runs.
 
 You can also inspect a read-only snapshot with Node.js:
 

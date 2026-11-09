@@ -10,6 +10,7 @@ const functions = [...source.matchAll(/^  function (\w+)\(([^\n]*)\) \{([\s\S]*?
 const ctx = vm.createContext({
   Model: require("../Model.js"),
   Quickshell: {execDetached(command) { launched.push(Array.from(command)) }},
+  Qt: {callLater(fn) { fn() }},
   dockerTarget: {kind: "context", value: "test", endpoint: "unix:///test.sock"},
   dockerAvailable: true, pendingAction: null, activeAction: null, actionProc: {running: false},
   actionNotice: "", mutationRevision: 0,
@@ -23,7 +24,7 @@ const ctx = vm.createContext({
 const launched = []
 ctx.root = ctx
 Object.defineProperty(ctx, "controlsBusy", {get() {
-  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.pendingAction !== null
+  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.activeSet !== null || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.activeAction !== null || ctx.pendingAction !== null
 }})
 vm.runInContext(functions.join("\n"), ctx)
 let passes = 0
@@ -33,14 +34,19 @@ function test(name, body) {
   console.log("ok - " + name)
 }
 function finish(code = 0, status = 0, message = "") {
+  const job = ctx.activeSet
   ctx.setProc.running = false
   ctx.finishSet(code, status, message)
+  if (code === 0 && status === 0 && ctx.activeSet === job && job.phase === "swap") {
+    ctx.setProc.running = false
+    ctx.finishSet(0, 0, "")
+  }
 }
 
 test("controller retains the in-flight job identity explicitly", () => {
   ctx.setMemory("web", 640)
   assert.equal(ctx.activeSet.name, "web")
-  assert.equal(ctx.setProc.command.at(-2), "-1")
+  assert.equal(ctx.setProc.command.at(-2), "1280m")
   assert.equal(ctx.setProc.command.at(-1), "a".repeat(64))
   assert.equal(ctx.setProc.command[7], "test")
 })
@@ -182,6 +188,19 @@ test("recent and follow logs launch independently without blocking the panel", (
   assert.equal(launched[1].includes("--follow"), true)
   assert.equal(launched[0].at(-1), "a".repeat(64))
   assert.equal(ctx.controlsBusy, false)
+})
+test("RAM updates apply a valid finite pair before lifting the swap bound", () => {
+  ctx.setMemory("web", 256)
+  assert.deepEqual(Array.from(ctx.setProc.command.slice(-6)), ["update", "--memory", "256m", "--memory-swap", "512m", "a".repeat(64)])
+  const preview = ctx.memOverrides.web
+  ctx.setProc.running = false
+  ctx.finishSet(0, 0, "")
+  assert.equal(ctx.memOverrides.web, preview)
+  assert.deepEqual(Array.from(ctx.setProc.command.slice(-4)), ["update", "--memory-swap", "-1", "a".repeat(64)])
+  ctx.setProc.running = false
+  ctx.finishSet(1, 0, "memory rejected")
+  assert.match(ctx.actionError, /RAM limit changed, but unlimited swap could not be applied/)
+  assert.equal(ctx.memOverrides.web, undefined)
 })
 test("log shortcuts respect selection and do not launch behind confirmations", () => {
   ctx.cursorActive = true

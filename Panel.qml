@@ -40,7 +40,7 @@ Panel {
   property var pendingAction: null
   property var activeAction: null
   property int mutationRevision: 0
-  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || pendingSets.length > 0 || actionProc.running || pendingAction !== null
+  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || actionProc.running || activeAction !== null || pendingAction !== null
 
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
@@ -123,25 +123,37 @@ Panel {
   }
 
   function startNextSet() {
-    if (setProc.running || pendingSets.length === 0) return
+    if (setProc.running || activeSet !== null || pendingSets.length === 0) return
     var job = pendingSets[0]
     pendingSets = pendingSets.slice(1)
     activeSet = job
+    activeSet.phase = "limit"
     mutationRevision += 1
-    setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.id])
+    // Apply a finite valid memory+swap pair first. Some runtimes reject an
+    // increase directly to unlimited swap; lift the temporary swap bound next.
+    setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", String(job.mb * 2) + "m", job.id])
     setProc.running = true
   }
 
   function finishSet(exitCode, exitStatus, errorText) {
     var job = activeSet
-    activeSet = null
     if (!job) return
+    if (exitCode === 0 && exitStatus === 0 && job.phase === "limit") {
+      job.phase = "swap"
+      // Process.exited can be emitted before running becomes false. Starting
+      // another command synchronously here may be lost by the old process exit.
+      Qt.callLater(function() {
+        setProc.command = Model.dockerCommand(job.target, ["update", "--memory-swap", "-1", job.id])
+        setProc.running = true
+      })
+      return
+    }
+    activeSet = null
     if (exitCode !== 0 || exitStatus !== 0)
-      actionError = "Could not update " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
+      actionError = "Could not update " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode) + (job.phase === "swap" ? " (RAM limit changed, but unlimited swap could not be applied)" : "")
     var queued = pendingSets.some(function(item) { return item.name === job.name })
     if (!queued && keyboardEdits[job.name] === undefined) clearOverride(job.name)
-    startNextSet()
-    refresh()
+    Qt.callLater(function() { root.startNextSet(); root.refresh() })
   }
 
   function moveCursor(delta) {
@@ -215,7 +227,7 @@ Panel {
     if (exitCode !== 0 || exitStatus !== 0)
       actionError = "Could not " + job.action + " " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
     else actionNotice = "Completed " + job.action + " for " + job.name
-    refresh()
+    Qt.callLater(root.refresh)
   }
 
   function selectedAction(action) {
@@ -330,6 +342,7 @@ Panel {
 
   KeyboardPanel {
     id: panel
+    objectName: "dockerTestPanel"
     anchorItem: button
     owner: root
     bar: root.bar
@@ -340,6 +353,7 @@ Panel {
 
     PanelKeyCatcher {
       id: keyCatcher
+      objectName: "dockerKeyCatcher"
       anchors.fill: parent
       blocked: root.pendingAction !== null
       onMoveRequested: function(dx, dy) {
@@ -360,6 +374,7 @@ Panel {
 
       ScrollView {
         id: scrollArea
+        objectName: "dockerScrollArea"
         anchors.fill: parent
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -432,7 +447,7 @@ Panel {
             width: parent.width
             text: Model.targetLabel(root.dockerTarget)
             textFormat: Text.PlainText
-            wrapMode: Text.WrapAnywhere
+            wrapMode: Text.Wrap
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -456,7 +471,7 @@ Panel {
           Text {
             visible: root.actionError !== ""
             width: parent.width
-            wrapMode: Text.WrapAnywhere
+            wrapMode: Text.Wrap
             textFormat: Text.PlainText
             text: root.actionError
             color: root.bar.foreground
@@ -467,7 +482,7 @@ Panel {
           Text {
             visible: root.actionNotice !== "" || actionProc.running
             width: parent.width
-            wrapMode: Text.WrapAnywhere
+            wrapMode: Text.Wrap
             textFormat: Text.PlainText
             text: actionProc.running && root.activeAction ? "Applying " + root.activeAction.action + " to " + root.activeAction.name + "…" : root.actionNotice
             color: root.bar.foreground
@@ -481,6 +496,7 @@ Panel {
 
             delegate: CursorSurface {
               id: containerRow
+              objectName: "dockerRow-" + container.fullId
               required property var modelData
               required property int index
 
@@ -638,6 +654,7 @@ Panel {
                 // Row 4: RAM slider
                 PanelSlider {
                   id: ramSlider
+                  objectName: "dockerMemory-" + containerRow.container.fullId
                   visible: containerRow.container.status === "running"
                   enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && !actionProc.running && root.pendingAction === null
                   bar: root.bar
@@ -695,6 +712,7 @@ Panel {
 
       Item {
         id: confirmationKeys
+        objectName: "dockerConfirmationKeys"
         anchors.fill: parent
         visible: root.pendingAction !== null
         z: 20
@@ -708,6 +726,7 @@ Panel {
         }
         ConfirmDialog {
           id: actionConfirm
+          objectName: "dockerActionConfirm"
           anchors.fill: parent
           opened: root.pendingAction !== null
           message: root.pendingAction ? "Confirm " + root.pendingAction.action + " for " + root.pendingAction.name + "?\n" + Model.targetLabel(root.pendingAction.target) + "\nStarting may execute the container workload; stopping or restarting may interrupt services." : ""

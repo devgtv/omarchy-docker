@@ -10,3 +10,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Run regression tests
         run: bash test/run
+      - name: Test real lifecycle and logs on disposable containers
+        env:
+          DOCKER_PLUGIN_DISPOSABLE_TESTS: "1"
+        run: node test/lifecycle.test.js

@@ -10,6 +10,7 @@
 - Keyboard shortcuts: `s` for start/stop, `Shift+r` for restart, `g` for recent logs and `Shift+g` for live logs.
 - Default-terminal log viewing with the last 200 timestamped lines, optional following and independent terminal windows.
 - Fake Docker CLI collector tests and controller regressions for the new operations.
+- Opt-in real-Docker integration tests using digest-pinned, labeled disposable containers, plus local graphical and default-terminal test suites.
 
 ### Changed
 
@@ -19,12 +20,15 @@
 - Snapshots started before a write are discarded and refreshed.
 - Lifecycle progress, success and failure feedback is shown in the panel.
 - Qualify the theme color singleton to avoid a QML color-name collision observed during runtime smoke testing.
+- Apply a finite valid RAM/memory+swap pair before enabling unlimited swap, fixing runtime errors reproduced with real Docker. Partial updates are explicitly reported if the second stage fails.
+- Defer process-exit continuations to the next event-loop turn before starting another command or refreshing the model.
+- Retain completed log output with a constant Bash wrapper and an Enter-to-close prompt, even when the default terminal launcher ignores `--hold`.
 
 ### Validation notes
 
-- Automated controller/collector tests use mocks for lifecycle writes and terminal launches. They never start, stop or restart user containers.
-- The actual component was instantiated with the installed Omarchy UI under Wayland; a confirmation was requested and canceled without writes. This does not replace visual or keyboard interaction testing.
-- A release still requires manual visual/keyboard testing in a live Omarchy session. Passing static checks is not a security audit.
+- The normal regression suite remains read-only against a live daemon; the separate CI write suite mutates only its own disposable containers and verifies cleanup.
+- Local graphical tests exercise the actual Omarchy UI under Wayland with fake Docker data; terminal tests exercise the actual default terminal with fake output. These do not modify user desktop configuration or workloads.
+- Real remote/rootless Docker endpoints and alternative terminal/compositor versions remain outside the validated environment. Passing these tests is not a security audit.
 
 ## 1.0.1
 

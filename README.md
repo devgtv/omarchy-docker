@@ -81,6 +81,14 @@ Run the regression suite (Node.js and Bash; live Docker integration skips when n
 bash test/run
 ```
 
+CI additionally runs `node test/lifecycle.test.js` with
+`DOCKER_PLUGIN_DISPOSABLE_TESTS=1` on its disposable Linux amd64 runner. This
+explicitly opted-in suite pulls a digest-pinned BusyBox image, creates two labeled
+containers without networking/host mounts, exercises the real controller's
+Start/Stop/Restart/RAM commands and recent/live log commands, then removes only
+its own containers. The normal `test/run` remains read-only against a live daemon.
+Do not opt into write tests on production Docker endpoints.
+
 You can also inspect a read-only snapshot with Node.js:
 
 ```bash

@@ -4,13 +4,13 @@
 // Bash script run by the panel Process. Output is sectioned:
 //   ==TARGET==     selector kind, selector value, daemon endpoint (one per line)
 //   ==DOCKER==     daemon version or "unavailable"
-//   ==HOST==       host total RAM in bytes
+//   ==HOST==       host total RAM in bytes; ==HOSTCPU== daemon logical CPU count
 //   ==CONTAINERS== id|name|image|status|memLimitBytes|JSON metadata
 //   ==STATS==      one line per container: name|cpuPerc|memUsage|memPerc
 // Only the first five separators are structural. Metadata is JSON encoded,
 // preserving pipes, newlines and Unicode in labels, paths and error messages.
 // Project only the fields we display: never emit environment or health logs.
-var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"exposedPorts":{{json .Config.ExposedPorts}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}}}'
+var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"exposedPorts":{{json .Config.ExposedPorts}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}},"nanoCpus":{{json .HostConfig.NanoCpus}}}'
 var snapshotScript = [
   "kind=context",
   "target=${DOCKER_CONTEXT:-}",
@@ -29,6 +29,9 @@ var snapshotScript = [
   "echo '==HOST=='",
   "mem=$(docker_cmd info --format '{{.MemTotal}}' 2>/dev/null)",
   "echo \"${mem:-0}\"",
+  "echo '==HOSTCPU=='",
+  "cpu=$(docker_cmd info --format '{{.NCPU}}' 2>/dev/null)",
+  "echo \"${cpu:-0}\"",
   "echo '==CONTAINERS=='",
   "ids=$(docker_cmd ps -aq 2>/dev/null)",
   "rows=",
@@ -137,6 +140,14 @@ function clampMemMb(mb, maxMb) {
   return Math.max(6, Math.min(max, n))
 }
 
+function clampCpuCores(cores, maxCores) {
+  var n = Math.round(Number(cores) * 10) / 10
+  var max = Math.floor(Number(maxCores) * 10) / 10
+  if (!isFinite(n)) n = 0.1
+  if (!isFinite(max) || max < 0.1) max = 0.1
+  return Math.max(0.1, Math.min(max, n))
+}
+
 // Use the daemon's RAM (also correct for remote Docker contexts). Unknown RAM
 // leaves only the minimum available; never invent a 16 GiB host capacity.
 function hostMemoryMb(bytes) {
@@ -168,7 +179,8 @@ function metadata(text) {
     mounts: Array.isArray(data.mounts) ? data.mounts.filter(function(m) { return m && typeof m === "object" }) : [],
     startedAt: string(data.startedAt), finishedAt: string(data.finishedAt),
     exitCode: typeof data.exitCode === "number" && isFinite(data.exitCode) ? data.exitCode : null,
-    oomKilled: data.oomKilled === true, error: string(data.error)
+    oomKilled: data.oomKilled === true, error: string(data.error),
+    nanoCpus: typeof data.nanoCpus === "number" && isFinite(data.nanoCpus) && data.nanoCpus >= 0 ? data.nanoCpus : 0
   }
 }
 
@@ -249,6 +261,7 @@ function parseSnapshot(text) {
     dockerVersion: "",
     target: null,
     hostMemBytes: 0,
+    hostCpuCount: 0,
     containers: []
   }
 
@@ -279,6 +292,9 @@ function parseSnapshot(text) {
   var hostBytes = Number(String(hostLines[0] || "").trim())
   result.hostMemBytes = isFinite(hostBytes) && hostBytes > 0 ? hostBytes : 0
 
+  var hostCpu = Number(String((sections["HOSTCPU"] || [])[0] || "").trim())
+  result.hostCpuCount = isFinite(hostCpu) && hostCpu > 0 ? Math.floor(hostCpu) : 0
+
   // Stats index by container name.
   var statsByName = {}
   var statsLines = sections["STATS"] || []
@@ -308,6 +324,7 @@ function parseSnapshot(text) {
       image: String(cp[2] || "").trim(),
       status: String(cp[3] || "").trim(),
       memLimitBytes: isFinite(limit) ? limit : 0,
+      cpuLimit: isFinite(extra.nanoCpus) ? extra.nanoCpus / 1000000000 : 0,
       cpuPercent: stats ? stats.cpuPercent : "",
       memUsageBytes: stats ? stats.memUsageBytes : 0,
       memPercent: stats ? stats.memPercent : ""
@@ -339,6 +356,7 @@ if (typeof module !== "undefined") {
     formatBytes: formatBytes,
     formatMb: formatMb,
     clampMemMb: clampMemMb,
+    clampCpuCores: clampCpuCores,
     hostMemoryMb: hostMemoryMb,
     parseSnapshot: parseSnapshot
   }

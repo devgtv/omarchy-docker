@@ -17,6 +17,7 @@ Panel {
   property string dockerVersion: ""
   property var dockerTarget: null
   property double hostMemBytes: 0
+  property int hostCpuCount: 0
   property var containers: []
   property string searchQuery: ""
   property string statusFilter: "all"
@@ -38,6 +39,8 @@ Panel {
   // Local per-container limit preview (name -> MB) while the
   // `docker update` is still in flight; keeps the knob from snapping back.
   property var memOverrides: ({})
+  property var cpuOverrides: ({})
+  property var activeCpuSet: null
 
   // Queue of pending `docker update` jobs: [{name, mb}]. One Process at a time.
   property var pendingSets: []
@@ -48,7 +51,7 @@ Panel {
   property var pendingAction: null
   property var activeAction: null
   property int mutationRevision: 0
-  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || actionProc.running || activeAction !== null || pendingAction !== null
+  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || cpuProc.running || activeCpuSet !== null || actionProc.running || activeAction !== null || pendingAction !== null
 
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
@@ -58,6 +61,11 @@ Panel {
   readonly property int memStep: 128
 
   Process { id: clipboardProc; onExited: function(code, status) { root.finishCopy(code, status) } }
+  Process {
+    id: cpuProc
+    stderr: StdioCollector { id: cpuErrors; waitForEnd: true }
+    onExited: function(code, status) { root.finishCpu(code, status, cpuErrors.text) }
+  }
 
   function containerLimitMb(c) {
     return c && c.memLimitBytes > 0 ? Math.round(c.memLimitBytes / 1048576) : 0
@@ -71,6 +79,48 @@ Panel {
     if (override !== undefined) return override
     var limit = containerLimitMb(c)
     return limit > 0 ? limit : hostMemMb
+  }
+
+  function effectiveCpu(c) {
+    if (!c) return hostCpuCount || 1
+    if (cpuOverrides[c.name] !== undefined) return cpuOverrides[c.name]
+    return c.cpuLimit > 0 ? c.cpuLimit : (hostCpuCount || 1)
+  }
+
+  function setCpuOverride(name, cores) {
+    var next = Object.assign({}, cpuOverrides)
+    next[name] = cores
+    cpuOverrides = next
+  }
+
+  function setCpu(name, cores) {
+    if (!name || !Model.validTarget(dockerTarget) || controlsBusy) return
+    var container = containers.filter(function(c) { return c.name === name })[0]
+    if (!Model.validContainer(container) || container.status !== "running") return
+    var value = cores === 0 ? 0 : Model.clampCpuCores(cores, hostCpuCount || 1)
+    var job = {name: name, id: container.fullId, value: value, target: dockerTarget}
+    setCpuOverride(name, value || (hostCpuCount || 1))
+    activeCpuSet = job
+    actionError = ""
+    cpuProc.command = Model.dockerCommand(job.target, ["update", "--cpus", String(value), "--", job.id])
+    cpuProc.running = true
+  }
+
+  function finishCpu(exitCode, exitStatus, errorText) {
+    var job = activeCpuSet
+    activeCpuSet = null
+    if (!job) return
+    if (exitCode !== 0 || exitStatus !== 0) {
+      actionError = "Could not update CPU limit for " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
+      var next = Object.assign({}, cpuOverrides)
+      delete next[job.name]
+      cpuOverrides = next
+    } else {
+      var committed = Object.assign({}, cpuOverrides)
+      delete committed[job.name]
+      cpuOverrides = committed
+    }
+    Qt.callLater(function() { root.refresh() })
   }
 
   function setOverride(name, mb) {
@@ -95,6 +145,9 @@ Panel {
       if (names.indexOf(key) >= 0) next[key] = memOverrides[key]
     }
     if (Object.keys(next).length !== Object.keys(memOverrides).length) memOverrides = next
+    var nextCpu = {}
+    for (var cpuName in cpuOverrides) if (names.indexOf(cpuName) >= 0) nextCpu[cpuName] = cpuOverrides[cpuName]
+    if (Object.keys(nextCpu).length !== Object.keys(cpuOverrides).length) cpuOverrides = nextCpu
   }
 
   function refresh() {
@@ -107,7 +160,7 @@ Panel {
 
   // --memory-swap -1 allows unlimited swap; it does not disable swapping.
   function setMemory(name, mb) {
-    if (!name || !Model.validTarget(dockerTarget) || actionProc.running || pendingAction !== null) return
+    if (!name || !Model.validTarget(dockerTarget) || cpuProc.running || activeCpuSet !== null || actionProc.running || pendingAction !== null) return
     var container = containers.filter(function(c) { return c.name === name })[0]
     if (!Model.validContainer(container) || container.status !== "running") return
     actionError = ""
@@ -184,7 +237,7 @@ Panel {
   }
 
   function adjustSelectedMem(deltaSteps) {
-    if (actionProc.running || pendingAction !== null) return
+    if (actionProc.running || cpuProc.running || activeCpuSet !== null || pendingAction !== null) return
     if (selectedIndex < 0 || selectedIndex >= visibleContainers.length) return
     var c = visibleContainers[selectedIndex]
     if (!c || c.status !== "running") return
@@ -345,6 +398,7 @@ Panel {
         }
         root.dockerTarget = snap.target
         root.hostMemBytes = snap.hostMemBytes
+        root.hostCpuCount = snap.hostCpuCount
         root.containers = snap.containers
         root.pruneOverrides(snap.containers.map(function(c) { return c.name }))
       }
@@ -397,7 +451,7 @@ Panel {
       id: keyCatcher
       objectName: "dockerKeyCatcher"
       anchors.fill: parent
-      blocked: root.pendingAction !== null || searchField.activeFocus || stateSelector.activeFocus || projectSelector.activeFocus
+      blocked: cpuProc.running || root.activeCpuSet !== null || root.pendingAction !== null || searchField.activeFocus || stateSelector.activeFocus || projectSelector.activeFocus
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         if (dy !== 0) root.moveCursor(dy)
@@ -843,7 +897,7 @@ Panel {
                   id: ramSlider
                   objectName: "dockerMemory-" + containerRow.container.fullId
                   visible: containerRow.container.status === "running"
-                  enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && !actionProc.running && root.pendingAction === null
+                  enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && !root.controlsBusy
                   bar: root.bar
                   width: parent.width
                   minimum: root.memMin
@@ -859,6 +913,115 @@ Panel {
                     root.userInteracting = false
                     root.setMemory(containerRow.container.name, v)
                   }
+                }
+
+                Flow {
+                  visible: containerRow.container.status === "running"
+                  width: parent.width
+                  spacing: Style.space(5)
+                  Repeater {
+                    model: [{label: "256 MiB", value: 256}, {label: "512 MiB", value: 512}, {label: "1 GiB", value: 1024}]
+                    delegate: Ui.Button {
+                      required property var modelData
+                      objectName: "dockerMemoryPreset-" + modelData.value + "-" + containerRow.container.fullId
+                      text: modelData.label
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      fontSize: Style.font.caption
+                      bordered: true
+                      enabled: !root.controlsBusy && root.dockerAvailable
+                      onClicked: root.setMemory(containerRow.container.name, modelData.value)
+                    }
+                  }
+                }
+
+                Item {
+                  visible: containerRow.container.status === "running"
+                  width: parent.width
+                  implicitHeight: cpuValue.implicitHeight
+                  Text {
+                    text: "CPU LIMIT"
+                    color: Qt.darker(root.bar.foreground, 1.4)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                  Text {
+                    id: cpuValue
+                    text: root.cpuOverrides[containerRow.container.name] !== undefined
+                      ? root.effectiveCpu(containerRow.container).toFixed(1) + " cores"
+                      : (containerRow.container.cpuLimit > 0 ? containerRow.container.cpuLimit.toFixed(1) + " cores" : "Unlimited")
+                    color: Qt.darker(root.bar.foreground, 1.4)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+
+                PanelSlider {
+                  id: cpuSlider
+                  objectName: "dockerCpu-" + containerRow.container.fullId
+                  visible: containerRow.container.status === "running"
+                  enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && !root.controlsBusy
+                  bar: root.bar
+                  width: parent.width
+                  minimum: 0.1
+                  maximum: Math.max(0.1, root.hostCpuCount || 1)
+                  step: 0.1
+                  integer: false
+                  value: root.effectiveCpu(containerRow.container)
+                  onMoved: function(v) {
+                    root.userInteracting = true
+                    root.setCpuOverride(containerRow.container.name, v)
+                  }
+                  onReleased: function(v) {
+                    root.userInteracting = false
+                    root.setCpu(containerRow.container.name, v)
+                  }
+                }
+
+                Flow {
+                  visible: containerRow.container.status === "running"
+                  width: parent.width
+                  spacing: Style.space(5)
+                  Repeater {
+                    model: [{label: "0.5 CPU", value: 0.5}, {label: "1 CPU", value: 1}, {label: "2 CPU", value: 2}]
+                    delegate: Ui.Button {
+                      required property var modelData
+                      objectName: "dockerCpuPreset-" + modelData.value + "-" + containerRow.container.fullId
+                      text: modelData.label
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      fontSize: Style.font.caption
+                      bordered: true
+                      enabled: !root.controlsBusy && root.dockerAvailable && modelData.value <= Math.max(1, root.hostCpuCount)
+                      onClicked: root.setCpu(containerRow.container.name, modelData.value)
+                    }
+                  }
+                  Ui.Button {
+                    objectName: "dockerCpuUnlimited-" + containerRow.container.fullId
+                    text: "Unlimited"
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    fontSize: Style.font.caption
+                    bordered: true
+                    enabled: !root.controlsBusy && root.dockerAvailable
+                    onClicked: root.setCpu(containerRow.container.name, 0)
+                  }
+                }
+
+                Text {
+                  visible: containerRow.container.status === "running"
+                  width: parent.width
+                  text: "Resource changes affect this container only; they are not saved to its Compose file and may be overwritten when Compose recreates it."
+                  color: Qt.darker(root.bar.foreground, 1.5)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.Wrap
                 }
               }
 

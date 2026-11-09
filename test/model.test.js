@@ -83,6 +83,9 @@ assertEqual(Model.clampMemMb("abc", 8192), 6, "clampMemMb falls back for NaN inp
 assertEqual(Model.clampMemMb(512, 4), 6, "clampMemMb survives a maximum below minimum")
 assertEqual(Model.clampMemMb(512, "abc"), 6, "clampMemMb falls back for NaN maximum")
 assertEqual(Model.clampMemMb(6, 6), 6, "clampMemMb handles equal bounds")
+assertEqual(Model.clampCpuCores(0.01, 4), 0.1, "clampCpuCores enforces a 0.1-core minimum")
+assertEqual(Model.clampCpuCores(2.26, 4), 2.3, "clampCpuCores rounds to a tenth of a core")
+assertEqual(Model.clampCpuCores(20, 4), 4, "clampCpuCores caps at daemon CPU count")
 
 assertEqual(Model.hostMemoryMb(8 * 1073741824), 8192, "hostMemoryMb respects hosts smaller than 16 GiB")
 assertEqual(Model.hostMemoryMb(64 * 1073741824), 65536, "hostMemoryMb supports RAM beyond signed 32-bit bytes")
@@ -97,9 +100,9 @@ for (const bytes of [0, -1, NaN, Infinity, "bad"]) {
 
 const fullSample = [
   "==DOCKER==", "29.7.2",
-  "==HOST==", "16766789632",
+  "==HOST==", "16766789632", "==HOSTCPU==", "8",
   "==CONTAINERS==",
-  "abcd1234ef5678901234|/web-app|nginx:latest|running|536870912",
+  "abcd1234ef5678901234|/web-app|nginx:latest|running|536870912|{\"nanoCpus\":2000000000}",
   "beef0001dead0002beef|cache-service|cache-service:1.2|running|0",
   "==STATS==",
   "web-app|0.12%|1.234GiB / 15.62GiB|7.90%",
@@ -110,12 +113,14 @@ const full = Model.parseSnapshot(fullSample)
 assert(full.dockerAvailable === true, "parseSnapshot detects available daemon")
 assertEqual(full.dockerVersion, "29.7.2", "parseSnapshot keeps daemon version")
 assertEqual(full.hostMemBytes, 16766789632, "parseSnapshot parses host RAM")
+assertEqual(full.hostCpuCount, 8, "parseSnapshot parses daemon CPU count")
 assertEqual(full.containers.length, 2, "parseSnapshot parses all containers")
 assertEqual(full.containers[0].id, "abcd1234ef56", "parseSnapshot truncates ids to 12 chars")
 assertEqual(full.containers[0].fullId, "abcd1234ef5678901234", "parseSnapshot also retains the original ID")
 assertEqual(full.containers[0].name, "web-app", "parseSnapshot strips leading slash from names")
 assertEqual(full.containers[0].status, "running", "parseSnapshot keeps container status")
 assertEqual(full.containers[0].memLimitBytes, 536870912, "parseSnapshot parses configured limit")
+assertEqual(full.containers[0].cpuLimit, 2, "parseSnapshot parses configured CPU limit")
 assertEqual(full.containers[1].memLimitBytes, 0, "parseSnapshot keeps zero limit as unlimited")
 assertEqual(full.containers[0].cpuPercent, "0.12%", "parseSnapshot joins stats by name")
 assertEqual(full.containers[0].memUsageBytes, 1324997411, "parseSnapshot parses mem usage from stats")
@@ -128,7 +133,7 @@ assertEqual(unavailable.dockerVersion, "", "parseSnapshot clears version when un
 assertEqual(unavailable.containers.length, 0, "parseSnapshot yields no containers when unavailable")
 
 const empty = Model.parseSnapshot("")
-assertEqual(empty, { dockerAvailable: false, dockerVersion: "", target: null, hostMemBytes: 0, containers: [] }, "parseSnapshot handles empty text")
+assertEqual(empty, { dockerAvailable: false, dockerVersion: "", target: null, hostMemBytes: 0, hostCpuCount: 0, containers: [] }, "parseSnapshot handles empty text")
 assertEqual(Model.parseSnapshot("==HOST==\n6.7108864e+10").hostMemBytes, 67108864000, "parseSnapshot accepts scientific notation without truncating RAM")
 assertEqual(Model.parseSnapshot("==HOST==\n-1024").hostMemBytes, 0, "parseSnapshot rejects negative RAM")
 
@@ -164,6 +169,7 @@ assertEqual(Model.parseSnapshot(weirdStats).containers[0].memUsageBytes, 0, "par
 
 assert(Model.snapshotScript.indexOf("==DOCKER==") >= 0, "snapshotScript carries the DOCKER section header")
 assert(Model.snapshotScript.indexOf("==HOST==") >= 0, "snapshotScript carries the HOST section header")
+assert(Model.snapshotScript.indexOf("==HOSTCPU==") >= 0 && Model.snapshotScript.indexOf("{{.NCPU}}") >= 0, "snapshotScript queries daemon CPU capacity")
 assert(Model.snapshotScript.indexOf("==CONTAINERS==") >= 0, "snapshotScript carries the CONTAINERS section header")
 assert(Model.snapshotScript.indexOf("==STATS==") >= 0, "snapshotScript carries the STATS section header")
 assert(Model.snapshotScript.indexOf("docker_cmd stats --no-stream") >= 0, "snapshotScript uses non-streaming stats")

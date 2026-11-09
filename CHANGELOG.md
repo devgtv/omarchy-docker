@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0 (unreleased)
+
+### Added
+
+- CPU limits for running containers, adjustable in 0.1-core increments and bounded by the selected daemon's logical CPU count.
+- CPU presets (0.5, 1 and 2 cores), an explicit Unlimited option, and common RAM presets (256 MiB, 512 MiB and 1 GiB).
+- An in-panel notice that Docker resource updates are runtime-only and are not written back to Compose files.
+- Snapshot collection and regression coverage for daemon CPU capacity and configured NanoCpus.
+
+### Changed
+
+- Serialize CPU changes with lifecycle and RAM operations, capture full container IDs and Docker targets, and report Docker errors.
+
 ## 1.2.0 (2026-11-09)
 
 ### Added

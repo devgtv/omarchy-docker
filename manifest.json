@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "devgtv.docker",
   "name": "Omarchy Control Docker",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "devgtv",
   "license": "MIT",
-  "description": "Search and group Docker containers, inspect health and details, control lifecycle, open logs and adjust RAM limits from the bar.",
+  "description": "Search and group Docker containers, inspect health and details, control lifecycle, open logs and adjust CPU/RAM limits from the bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "Omarchy Control Docker",
-    "description": "Docker context-aware panel with search, filters, Compose groups, health and details, clipboard actions, confirmed lifecycle controls, logs and RAM sliders.",
+    "description": "Docker context-aware panel with search, filters, Compose groups, health and details, clipboard actions, confirmed lifecycle controls, logs and CPU/RAM resource controls.",
     "category": "System",
     "defaultSection": "right",
     "allowMultiple": false

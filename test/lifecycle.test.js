@@ -39,13 +39,15 @@ const ctx = vm.createContext({Model, Qt: {callLater(fn) { fn() }}, dockerAvailab
   pendingAction: null, activeAction: null, actionError: "", actionNotice: "",
   userInteracting: false, mutationRevision: 0, selectedIndex: 0, cursorActive: true,
   memMin: 6, memStep: 128, hostMemMb: 8192,
+  hostCpuCount: 4, cpuOverrides: {}, activeCpuSet: null,
   actionProc: {running: false}, setProc: {running: false}, refreshProc: {running: false},
+  cpuProc: {running: false},
   memDebounce: {running: false, restart() { this.running = true }}
 })
 ctx.root = ctx
 Object.defineProperty(ctx, "visibleContainers", {get() { return ctx.containers }})
 Object.defineProperty(ctx, "controlsBusy", {get() {
-  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.activeSet !== null || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.activeAction !== null || ctx.pendingAction !== null
+  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.activeSet !== null || ctx.pendingSets.length > 0 || ctx.cpuProc.running || ctx.activeCpuSet !== null || ctx.actionProc.running || ctx.activeAction !== null || ctx.pendingAction !== null
 }})
 vm.runInContext(functions.join("\n"), ctx)
 function sync() {
@@ -87,6 +89,22 @@ function memory(id, mb) {
   }
   assert.equal(inspect(id).HostConfig.Memory, mb * 1048576)
   assert.equal(inspect(id).HostConfig.MemorySwap, -1)
+  sync()
+}
+
+function cpu(id, cores) {
+  owned(id)
+  const c = ctx.containers.find(item => item.fullId === id)
+  ctx.setCpu(c.name, cores)
+  const job = ctx.activeCpuSet
+  assert(job, "CPU update must capture a container identity")
+  assert.equal(ctx.cpuProc.command.at(-1), id)
+  assert(ctx.cpuProc.command.includes("--cpus"))
+  exec(Array.from(ctx.cpuProc.command))
+  ctx.cpuProc.running = false
+  ctx.finishCpu(0, 0, "")
+  const config = inspect(id).HostConfig
+  assert.equal(config.NanoCpus, Math.round(cores * 1000000000))
   sync()
 }
 
@@ -151,6 +169,12 @@ async function main() {
     ok("an initially unlimited container accepts its first finite RAM limit")
     memory(created[0], 64)
     ok("a running container accepts a lower RAM limit and retains unlimited swap")
+
+    cpu(created[0], 1.5)
+    assert.equal(inspect(created[1]).HostConfig.NanoCpus, 0)
+    ok("CPU update applies the selected fractional core limit to only one container")
+    cpu(created[0], 0)
+    ok("the controller restores unlimited CPU after a finite CPU limit")
 
     const startedAt = inspect(created[0]).State.StartedAt
     action("restart", created[0])

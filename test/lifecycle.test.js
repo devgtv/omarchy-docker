@@ -113,6 +113,8 @@ async function main() {
     const job = ctx.activeSet
     while (ctx.activeSet === job) {
       exec(Array.from(ctx.setProc.command))
+      const config = inspect(created[0]).HostConfig
+      console.log("# memory stage " + job.phase + ": " + JSON.stringify({memory: config.Memory, memorySwap: config.MemorySwap}))
       ctx.setProc.running = false
       ctx.finishSet(0, 0, "")
     }

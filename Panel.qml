@@ -127,30 +127,30 @@ Panel {
     var job = pendingSets[0]
     pendingSets = pendingSets.slice(1)
     activeSet = job
-    activeSet.phase = "swap"
+    activeSet.phase = "limit"
     mutationRevision += 1
-    // Some runc/cgroup configurations reject a combined increase when the old
-    // memory+swap limit is below the new RAM limit. Relax swap first.
-    setProc.command = Model.dockerCommand(job.target, ["update", "--memory-swap", "-1", job.id])
+    // Apply a finite valid memory+swap pair first. Some runtimes reject an
+    // increase directly to unlimited swap; lift the temporary swap bound next.
+    setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", String(job.mb * 2) + "m", job.id])
     setProc.running = true
   }
 
   function finishSet(exitCode, exitStatus, errorText) {
     var job = activeSet
     if (!job) return
-    if (exitCode === 0 && exitStatus === 0 && job.phase === "swap") {
-      job.phase = "memory"
+    if (exitCode === 0 && exitStatus === 0 && job.phase === "limit") {
+      job.phase = "swap"
       // Process.exited can be emitted before running becomes false. Starting
       // another command synchronously here may be lost by the old process exit.
       Qt.callLater(function() {
-        setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.id])
+        setProc.command = Model.dockerCommand(job.target, ["update", "--memory-swap", "-1", job.id])
         setProc.running = true
       })
       return
     }
     activeSet = null
     if (exitCode !== 0 || exitStatus !== 0)
-      actionError = "Could not update " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode) + (job.phase === "memory" ? " (swap was already set to unlimited)" : "")
+      actionError = "Could not update " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode) + (job.phase === "swap" ? " (RAM limit changed, but unlimited swap could not be applied)" : "")
     var queued = pendingSets.some(function(item) { return item.name === job.name })
     if (!queued && keyboardEdits[job.name] === undefined) clearOverride(job.name)
     Qt.callLater(function() { root.startNextSet(); root.refresh() })

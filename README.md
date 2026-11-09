@@ -120,6 +120,11 @@ console.log(M.parseSnapshot(require("child_process").execSync(M.snapshotScript, 
 '
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the pull request workflow, testing
+requirements and review policy. Only the maintainer merges pull requests.
+
 ## License
 
 MIT

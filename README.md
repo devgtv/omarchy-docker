@@ -11,6 +11,8 @@
 - For each container you can see its status, CPU and used memory.
 - A slider sets the RAM limit of the selected container (`docker update --memory ... --memory-swap -1`).
 - The popup auto-refreshes every 3 seconds.
+- The popup identifies the selected Docker context and whether it uses a local socket or a network endpoint. `DOCKER_CONTEXT` takes precedence over `DOCKER_HOST`, matching Docker CLI behavior.
+- Snapshots and RAM updates explicitly select their captured target, so switching the default context does not redirect an already queued update. Host URLs are not displayed, to avoid exposing embedded credentials.
 
 ## Installation
 

@@ -13,6 +13,7 @@ Panel {
 
   property bool dockerAvailable: false
   property string dockerVersion: ""
+  property var dockerTarget: null
   property double hostMemBytes: 0
   property var containers: []
 
@@ -86,7 +87,7 @@ Panel {
 
   // --memory-swap -1 allows unlimited swap; it does not disable swapping.
   function setMemory(name, mb) {
-    if (!name) return
+    if (!name || !Model.validTarget(dockerTarget)) return
     actionError = ""
     // A direct slider release supersedes an older debounced keyboard edit.
     var edits = {}
@@ -104,7 +105,7 @@ Panel {
         return
       }
     }
-    queue.push({ name: name, mb: clamped })
+    queue.push({ name: name, mb: clamped, target: dockerTarget })
     pendingSets = queue
     startNextSet()
   }
@@ -114,7 +115,7 @@ Panel {
     var job = pendingSets[0]
     pendingSets = pendingSets.slice(1)
     activeSet = job
-    setProc.command = ["docker", "update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.name]
+    setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.name])
     setProc.running = true
   }
 
@@ -217,6 +218,8 @@ Panel {
         var snap = Model.parseSnapshot(String(text || ""))
         root.dockerAvailable = snap.dockerAvailable
         root.dockerVersion = snap.dockerVersion
+        if (JSON.stringify(root.dockerTarget) !== JSON.stringify(snap.target)) root.memOverrides = ({})
+        root.dockerTarget = snap.target
         root.hostMemBytes = snap.hostMemBytes
         root.containers = snap.containers
         root.pruneOverrides(snap.containers.map(function(c) { return c.name }))
@@ -339,6 +342,16 @@ Panel {
           }
 
           // ---------- Docker unavailable ----------
+          Text {
+            width: parent.width
+            text: Model.targetLabel(root.dockerTarget)
+            textFormat: Text.PlainText
+            wrapMode: Text.WrapAnywhere
+            color: root.bar.foreground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
           PanelSeparator {
             visible: !root.dockerAvailable
             foreground: root.bar.foreground
@@ -486,8 +499,9 @@ Panel {
                 }
 
                 // Row 4: RAM slider
-                PanelSlider {
+                  PanelSlider {
                   id: ramSlider
+                  enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget)
                   bar: root.bar
                   width: parent.width
                   minimum: root.memMin

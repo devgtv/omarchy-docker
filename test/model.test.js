@@ -127,7 +127,7 @@ assertEqual(unavailable.dockerVersion, "", "parseSnapshot clears version when un
 assertEqual(unavailable.containers.length, 0, "parseSnapshot yields no containers when unavailable")
 
 const empty = Model.parseSnapshot("")
-assertEqual(empty, { dockerAvailable: false, dockerVersion: "", hostMemBytes: 0, containers: [] }, "parseSnapshot handles empty text")
+assertEqual(empty, { dockerAvailable: false, dockerVersion: "", target: null, hostMemBytes: 0, containers: [] }, "parseSnapshot handles empty text")
 assertEqual(Model.parseSnapshot("==HOST==\n6.7108864e+10").hostMemBytes, 67108864000, "parseSnapshot accepts scientific notation without truncating RAM")
 assertEqual(Model.parseSnapshot("==HOST==\n-1024").hostMemBytes, 0, "parseSnapshot rejects negative RAM")
 
@@ -165,8 +165,18 @@ assert(Model.snapshotScript.indexOf("==DOCKER==") >= 0, "snapshotScript carries 
 assert(Model.snapshotScript.indexOf("==HOST==") >= 0, "snapshotScript carries the HOST section header")
 assert(Model.snapshotScript.indexOf("==CONTAINERS==") >= 0, "snapshotScript carries the CONTAINERS section header")
 assert(Model.snapshotScript.indexOf("==STATS==") >= 0, "snapshotScript carries the STATS section header")
-assert(Model.snapshotScript.indexOf("docker stats --no-stream") >= 0, "snapshotScript uses non-streaming stats")
-assert(Model.snapshotScript.indexOf("docker info --format '{{.MemTotal}}'") >= 0, "snapshotScript queries the selected daemon's RAM")
+assert(Model.snapshotScript.indexOf("docker_cmd stats --no-stream") >= 0, "snapshotScript uses non-streaming stats")
+assert(Model.snapshotScript.indexOf("docker_cmd info --format '{{.MemTotal}}'") >= 0, "snapshotScript queries the selected daemon's RAM")
+
+const remote = Model.parseSnapshot("==TARGET==\ncontext\nproduction\nssh://user@server\n==DOCKER==\n29.0\n").target
+assertEqual(remote, {kind: "context", value: "production", endpoint: "ssh://user@server"}, "parseSnapshot identifies remote context")
+assertEqual(Model.targetLabel(remote), "Context: production · remote / network", "targetLabel warns about network targets")
+assertEqual(Model.targetLabel({kind: "host", value: "tcp://user:secret@server", endpoint: "tcp://user:secret@server"}), "DOCKER_HOST override · remote / network", "targetLabel does not leak host credentials")
+assertEqual(Model.targetLabel({kind: "context", value: "default", endpoint: "unix:///run/docker.sock"}), "Context: default · local socket", "targetLabel identifies local sockets")
+assertEqual(Model.dockerCommand(null, ["stop", "abc"]), [], "dockerCommand refuses unknown targets")
+assertEqual(Model.dockerCommand({kind: "invalid", value: "test"}, []), [], "dockerCommand refuses invalid selector kinds")
+assertEqual(Model.dockerCommand({kind: "context", value: "bad\ncontext"}, []), [], "dockerCommand refuses control characters")
+assertEqual(Model.dockerCommand(remote, ["version"]), ["env", "-u", "DOCKER_CONTEXT", "-u", "DOCKER_HOST", "docker", "--context", "production", "version"], "dockerCommand pins target and clears inherited selectors")
 
 console.log(`\n${passes} passed, ${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

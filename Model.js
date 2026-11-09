@@ -2,27 +2,61 @@
 // Kept separate from the UI so it can be tested with node (see README.md).
 
 // Bash script run by the panel Process. Output is sectioned:
+//   ==TARGET==     selector kind, selector value, daemon endpoint (one per line)
 //   ==DOCKER==     daemon version or "unavailable"
 //   ==HOST==       host total RAM in bytes
 //   ==CONTAINERS== one line per container: id|name|image|status|memLimitBytes
 //   ==STATS==      one line per container: name|cpuPerc|memUsage|memPerc
 // "|" is a safe separator: container/image names cannot contain "|".
 var snapshotScript = [
+  "kind=context",
+  "target=${DOCKER_CONTEXT:-}",
+  "if [ -z \"$target\" ] && [ -n \"${DOCKER_HOST:-}\" ]; then kind=host; target=$DOCKER_HOST; fi",
+  "if [ -z \"$target\" ]; then target=$(docker context show 2>/dev/null); fi",
+  "endpoint=$target",
+  "if [ \"$kind\" = context ]; then endpoint=$(docker context inspect \"$target\" --format '{{.Endpoints.docker.Host}}' 2>/dev/null); fi",
+  "echo '==TARGET=='",
+  "printf '%s\\n' \"$kind\" \"$target\" \"$endpoint\"",
+  // Freeze the selected target for every command in this snapshot. Clearing
+  // selector variables also makes explicit action commands independent of later
+  // `docker context use` changes; TLS/auth configuration is otherwise preserved.
+  "docker_cmd() { [ -n \"$target\" ] && env -u DOCKER_CONTEXT -u DOCKER_HOST docker --\"$kind\" \"$target\" \"$@\"; }",
   "echo '==DOCKER=='",
-  "docker version --format '{{.Server.Version}}' 2>/dev/null || echo unavailable",
+  "docker_cmd version --format '{{.Server.Version}}' 2>/dev/null || echo unavailable",
   "echo '==HOST=='",
-  "mem=$(docker info --format '{{.MemTotal}}' 2>/dev/null)",
+  "mem=$(docker_cmd info --format '{{.MemTotal}}' 2>/dev/null)",
   "echo \"${mem:-0}\"",
   "echo '==CONTAINERS=='",
-  "ids=$(docker ps -q 2>/dev/null)",
+  "ids=$(docker_cmd ps -q 2>/dev/null)",
   "if [ -n \"$ids\" ]; then",
-  "  docker inspect --format '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}' $ids 2>/dev/null",
+  "  docker_cmd inspect --format '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}' $ids 2>/dev/null",
   "fi",
   "echo '==STATS=='",
   "if [ -n \"$ids\" ]; then",
-  "  docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' $ids 2>/dev/null",
+  "  docker_cmd stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' $ids 2>/dev/null",
   "fi"
 ].join("\n")
+
+function validTarget(target) {
+  return !!target && (target.kind === "context" || target.kind === "host")
+    && typeof target.value === "string" && target.value.length > 0
+    && !/[\x00-\x1f\x7f]/.test(target.value)
+}
+
+// Argument arrays only: never interpolate context names or daemon hosts into a
+// shell command. Return no command if target detection failed (fail closed).
+function dockerCommand(target, args) {
+  if (!validTarget(target)) return []
+  return ["env", "-u", "DOCKER_CONTEXT", "-u", "DOCKER_HOST", "docker", "--" + target.kind, target.value].concat(args)
+}
+
+function targetLabel(target) {
+  if (!validTarget(target)) return "Docker target unavailable"
+  var endpoint = String(target.endpoint || "")
+  var location = /^(unix|npipe):/.test(endpoint) ? "local socket" : "remote / network"
+  // Do not expose credentials embedded in a DOCKER_HOST URL.
+  return (target.kind === "context" ? "Context: " + target.value : "DOCKER_HOST override") + " · " + location
+}
 
 function parseSizeToBytes(text) {
   var m = /^(\d+(?:\.\d+)?)\s*([KMGT]?i?B)$/i.exec(String(text || "").trim())
@@ -78,6 +112,7 @@ function parseSnapshot(text) {
   var result = {
     dockerAvailable: false,
     dockerVersion: "",
+    target: null,
     hostMemBytes: 0,
     containers: []
   }
@@ -100,6 +135,10 @@ function parseSnapshot(text) {
   var version = String(dockerLines[0] || "").trim()
   result.dockerAvailable = version !== "" && version !== "unavailable"
   result.dockerVersion = result.dockerAvailable ? version : ""
+
+  var targetLines = sections["TARGET"] || []
+  var target = { kind: String(targetLines[0] || "").trim(), value: String(targetLines[1] || "").trim(), endpoint: String(targetLines[2] || "").trim() }
+  result.target = validTarget(target) ? target : null
 
   var hostLines = sections["HOST"] || []
   var hostBytes = Number(String(hostLines[0] || "").trim())
@@ -144,6 +183,9 @@ function parseSnapshot(text) {
 if (typeof module !== "undefined") {
   module.exports = {
     snapshotScript: snapshotScript,
+    validTarget: validTarget,
+    dockerCommand: dockerCommand,
+    targetLabel: targetLabel,
     parseSizeToBytes: parseSizeToBytes,
     formatBytes: formatBytes,
     formatMb: formatMb,

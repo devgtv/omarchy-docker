@@ -7,16 +7,17 @@
 ## What it does
 
 - Adds a Docker icon to the bar.
-- Click the icon to open a popup with the running containers and the host's memory usage.
+- Click the icon to open a popup with the running containers and their resource usage.
 - For each container you can see its status, CPU and used memory.
 - A slider sets the RAM limit of the selected container (`docker update --memory ... --memory-swap -1`).
 - The popup auto-refreshes every 3 seconds.
 
 ## Installation
 
-The plugin lives in `~/.config/omarchy/plugins/devgtv.docker/`. Enable it with:
+Requires Omarchy Quattro (Quickshell), Bash, the Docker CLI and access to a running Docker daemon. Install and enable it with:
 
 ```bash
+omarchy plugin install https://github.com/devgtv/omarchy-docker
 omarchy plugin enable devgtv.docker right
 ```
 
@@ -40,6 +41,8 @@ omarchy plugin remove devgtv.docker
   - `r` force refresh
   - `Esc` close
 - The slider range goes from 6 MiB up to the Docker daemon's total RAM, including remote contexts. Keyboard and wheel adjustments use 128 MiB steps. If RAM cannot be detected, only the 6 MiB minimum is available.
+- Failed RAM updates show the Docker error in the popup. Rapid edits are queued per container, even if you change selection before the keyboard debounce finishes.
+- Changing a limit also sets `--memory-swap -1` (unlimited swap, not disabled swap). Lowering memory can cause a container's workload to be killed by the kernel's out-of-memory handler. Changes affect the selected Docker context, which may be remote.
 
 ## Configuration
 
@@ -58,11 +61,17 @@ Default is 3000 ms.
 
 - Data is collected by a Quickshell `Process` running `docker ps`, `docker inspect` and `docker stats`.
 - The limit change uses `docker update --memory <MB>m --memory-swap -1 <container>`.
-- The user must be a member of the `docker` group so no elevated permissions are required.
+- The user needs access to the selected Docker daemon (for example via the `docker` group or rootless Docker). Membership in the `docker` group effectively grants root-level access; this plugin does not elevate privileges.
 
 ## Testing Model.js locally
 
-You can test the parser with Node.js:
+Run the regression suite (Node.js and Bash; live Docker integration skips when no daemon is reachable):
+
+```bash
+bash test/run
+```
+
+You can also inspect a read-only snapshot with Node.js:
 
 ```bash
 node -e '

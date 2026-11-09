@@ -69,7 +69,7 @@ fi
 
 # Static contract check against the Omarchy shell source.
 SHELL_DIR=""
-for candidate in "$ROOT/../omarchy-fork/shell" /usr/share/omarchy/shell "$OMARCHY_PATH/shell"; do
+for candidate in "$ROOT/../omarchy-fork/shell" /usr/share/omarchy/shell "${OMARCHY_PATH:-/usr/share/omarchy}/shell"; do
   if [[ -d $candidate ]]; then
     SHELL_DIR=$candidate
     break

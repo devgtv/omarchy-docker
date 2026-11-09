@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "devgtv.docker",
   "name": "Omarchy Control Docker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "devgtv",
   "license": "MIT",
   "description": "Shows running Docker containers in the bar and lets you control the RAM limit of each one.",

@@ -30,6 +30,9 @@ Panel {
 
   // Queue of pending `docker update` jobs: [{name, mb}]. One Process at a time.
   property var pendingSets: []
+  property var activeSet: null
+  property var keyboardEdits: ({})
+  property string actionError: ""
 
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
@@ -77,13 +80,18 @@ Panel {
   }
 
   function refresh() {
+    if (userInteracting || memDebounce.running || setProc.running || pendingSets.length > 0) return
     if (!refreshProc.running) refreshProc.running = true
   }
 
-  // Applies `docker update --memory <mb>m`. --memory-swap -1 follows along so the
-  // daemon rejects limits larger than the currently configured swap.
+  // --memory-swap -1 allows unlimited swap; it does not disable swapping.
   function setMemory(name, mb) {
     if (!name) return
+    actionError = ""
+    // A direct slider release supersedes an older debounced keyboard edit.
+    var edits = {}
+    for (var key in keyboardEdits) if (key !== name) edits[key] = keyboardEdits[key]
+    keyboardEdits = edits
     var clamped = Model.clampMemMb(mb, hostMemMb)
     setOverride(name, clamped)
 
@@ -105,8 +113,21 @@ Panel {
     if (setProc.running || pendingSets.length === 0) return
     var job = pendingSets[0]
     pendingSets = pendingSets.slice(1)
+    activeSet = job
     setProc.command = ["docker", "update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.name]
     setProc.running = true
+  }
+
+  function finishSet(exitCode, exitStatus, errorText) {
+    var job = activeSet
+    activeSet = null
+    if (!job) return
+    if (exitCode !== 0 || exitStatus !== 0)
+      actionError = "Could not update " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
+    var queued = pendingSets.some(function(item) { return item.name === job.name })
+    if (!queued && keyboardEdits[job.name] === undefined) clearOverride(job.name)
+    startNextSet()
+    refresh()
   }
 
   function moveCursor(delta) {
@@ -132,7 +153,19 @@ Panel {
     if (!c) return
     var next = Model.clampMemMb(effectiveMb(c) + deltaSteps * memStep, hostMemMb)
     setOverride(c.name, next)
+    var edits = Object.assign({}, keyboardEdits)
+    edits[c.name] = next
+    keyboardEdits = edits
     memDebounce.restart()
+  }
+
+  function flushKeyboardEdits() {
+    var edits = keyboardEdits
+    keyboardEdits = ({})
+    for (var name in edits) {
+      if (containers.some(function(c) { return c.name === name })) setMemory(name, edits[name])
+      else clearOverride(name)
+    }
   }
 
   function ensureCursorVisible(item) {
@@ -178,6 +211,9 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        // A request already in flight must not recreate a dragged slider or
+        // replace the model underneath a keyboard preview.
+        if (root.userInteracting || memDebounce.running || setProc.running || root.pendingSets.length > 0) return
         var snap = Model.parseSnapshot(String(text || ""))
         root.dockerAvailable = snap.dockerAvailable
         root.dockerVersion = snap.dockerVersion
@@ -190,19 +226,9 @@ Panel {
 
   Process {
     id: setProc
-    property string finishedName: ""
     stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
-    onRunningChanged: {
-      if (running) {
-        // The in-flight job name is the 6th argument of the command.
-        finishedName = String(command[6] || "")
-        return
-      }
-      root.clearOverride(finishedName)
-      root.startNextSet()
-      root.refresh()
-    }
+    stderr: StdioCollector { id: setErrors; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) { root.finishSet(exitCode, exitStatus, setErrors.text) }
   }
 
   // Debounce for keyboard (h/l) adjustments.
@@ -210,12 +236,7 @@ Panel {
     id: memDebounce
     interval: 300
     repeat: false
-    onTriggered: {
-      if (root.selectedIndex < 0 || root.selectedIndex >= root.containers.length) return
-      var c = root.containers[root.selectedIndex]
-      if (!c) return
-      root.setMemory(c.name, root.effectiveMb(c))
-    }
+    onTriggered: root.flushKeyboardEdits()
   }
 
   BarIconButton {
@@ -329,6 +350,17 @@ Panel {
             wrapMode: Text.WordWrap
             text: "Could not reach the Docker daemon. Make sure it is running and that your user is in the docker group."
             color: Qt.darker(root.bar.foreground, 1.4)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          Text {
+            visible: root.actionError !== ""
+            width: parent.width
+            wrapMode: Text.WrapAnywhere
+            textFormat: Text.PlainText
+            text: root.actionError
+            color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
           }

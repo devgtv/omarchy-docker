@@ -39,7 +39,7 @@ omarchy plugin remove devgtv.docker
   - `h`/`l` adjust the RAM limit (300 ms debounce)
   - `r` force refresh
   - `Esc` close
-- The slider range goes from 6 MiB up to the host's total RAM (minimum 16 GiB) in 128 MiB steps; the value is applied to the selected container.
+- The slider range goes from 6 MiB up to the Docker daemon's total RAM, including remote contexts. Keyboard and wheel adjustments use 128 MiB steps. If RAM cannot be detected, only the 6 MiB minimum is available.
 
 ## Configuration
 

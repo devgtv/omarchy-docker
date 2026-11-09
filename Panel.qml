@@ -447,7 +447,7 @@ Panel {
             width: parent.width
             text: Model.targetLabel(root.dockerTarget)
             textFormat: Text.PlainText
-            wrapMode: Text.WrapAnywhere
+            wrapMode: Text.Wrap
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -471,7 +471,7 @@ Panel {
           Text {
             visible: root.actionError !== ""
             width: parent.width
-            wrapMode: Text.WrapAnywhere
+            wrapMode: Text.Wrap
             textFormat: Text.PlainText
             text: root.actionError
             color: root.bar.foreground
@@ -482,7 +482,7 @@ Panel {
           Text {
             visible: root.actionNotice !== "" || actionProc.running
             width: parent.width
-            wrapMode: Text.WrapAnywhere
+            wrapMode: Text.Wrap
             textFormat: Text.PlainText
             text: actionProc.running && root.activeAction ? "Applying " + root.activeAction.action + " to " + root.activeAction.name + "…" : root.actionNotice
             color: root.bar.foreground

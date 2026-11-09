@@ -1,0 +1,41 @@
+#!/bin/bash
+# Opens a short-lived test panel on the current Wayland session. Uses a fake
+# Docker CLI and terminal launcher; never touches real containers or config.
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+SHELL_ROOT=${OMARCHY_PATH:-/usr/share/omarchy}/shell
+OUTPUT=${DOCKER_PLUGIN_UI_OUTPUT:?Set DOCKER_PLUGIN_UI_OUTPUT to an artifact directory}
+mkdir -p "$OUTPUT"
+if [[ -e "$OUTPUT/state.json" || -e "$OUTPUT/terminals.jsonl" ]]; then
+  echo "Use a fresh UI artifact directory so previous fixture state cannot affect this run." >&2
+  exit 1
+fi
+TEMP=$(mktemp -d "${TMPDIR:-/tmp}/docker-plugin-ui-XXXXXX")
+trap 'rm -rf -- "$TEMP"' EXIT
+mkdir "$TEMP/bin"
+cp "$ROOT/test/ui/shell.qml" "$TEMP/shell.qml"
+ln -s "$SHELL_ROOT/Ui" "$TEMP/Ui"
+ln -s "$SHELL_ROOT/Commons" "$TEMP/Commons"
+cp "$ROOT/test/ui/docker.js" "$TEMP/bin/docker"
+cp "$ROOT/test/ui/terminal.js" "$TEMP/bin/xdg-terminal-exec"
+chmod +x "$TEMP/bin/docker" "$TEMP/bin/xdg-terminal-exec"
+export PATH="$TEMP/bin:$PATH"
+export DOCKER_PLUGIN_TEST_PATH="$ROOT"
+export DOCKER_PLUGIN_UI_STATE="$OUTPUT/state.json"
+export DOCKER_PLUGIN_UI_TERMINALS="$OUTPUT/terminals.jsonl"
+unset DOCKER_CONTEXT DOCKER_HOST
+timeout 45s quickshell --no-color -p "$TEMP/shell.qml" 2>&1 | tee "$OUTPUT/runtime.log"
+grep -q 'UI ASSERTIONS PASSED' "$OUTPUT/runtime.log"
+if grep -q 'FAIL!' "$OUTPUT/runtime.log"; then exit 1; fi
+node -e '
+  const fs = require("node:fs")
+  const assert = require("node:assert/strict")
+  const calls = fs.readFileSync(process.argv[1] + ".calls", "utf8").trim().split("\n").map(JSON.parse)
+  const actions = calls.filter(c => ["start", "stop", "restart"].includes(c.action))
+  assert.deepEqual(actions.map(c => c.action), ["stop", "start", "stop"])
+  const terminals = fs.readFileSync(process.argv[2], "utf8").trim().split("\n").map(JSON.parse)
+  assert.equal(terminals.length, 2)
+  assert.equal(terminals.filter(args => args.includes("--follow")).length, 1)
+  assert(terminals.every(args => args.at(-1) === "a".repeat(64)))
+  console.log("ok - only confirmed UI actions executed; recent and live log shortcuts launched")
+' "$DOCKER_PLUGIN_UI_STATE" "$DOCKER_PLUGIN_UI_TERMINALS"

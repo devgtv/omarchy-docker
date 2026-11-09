@@ -84,9 +84,11 @@ function logsCommand(target, container, follow) {
   var args = ["logs", "--tail", "200", "--timestamps"]
   if (follow === true) args.push("--follow")
   args.push("--", container.fullId)
-  // The terminal receives an argument array, not shell-interpolated names.
-  // --hold keeps completed logs/errors readable where supported by the terminal.
-  return ["xdg-terminal-exec", "--hold", "--title=Docker logs: " + String(container.name || container.fullId.substring(0, 12)) + " · " + targetLabel(target), "--"].concat(dockerCommand(target, args))
+  // Some terminal desktop entries silently ignore --hold. Use a constant Bash
+  // program with positional arguments instead, never interpolating Docker data.
+  // Trap SIGINT in the wrapper so Ctrl+C stops following but retains the output.
+  var keepOpen = "trap ':' INT; \"$@\"; status=$?; printf '\\nDocker logs finished (exit %s). Press Enter to close.\\n' \"$status\"; read -r _; exit \"$status\""
+  return ["xdg-terminal-exec", "--title=Docker logs: " + String(container.name || container.fullId.substring(0, 12)) + " · " + targetLabel(target), "--", "bash", "-c", keepOpen, "docker-plugin-logs"].concat(dockerCommand(target, args))
 }
 
 function parseSizeToBytes(text) {

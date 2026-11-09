@@ -71,6 +71,24 @@ function action(verb, id) {
   sync()
 }
 
+function memory(id, mb) {
+  owned(id)
+  const c = ctx.containers.find(c => c.fullId === id)
+  ctx.setMemory(c.name, mb)
+  const job = ctx.activeSet
+  assert(job, "memory job must start")
+  while (ctx.activeSet === job) {
+    exec(Array.from(ctx.setProc.command))
+    const config = inspect(id).HostConfig
+    console.log("# memory stage " + job.phase + ": " + JSON.stringify({memory: config.Memory, memorySwap: config.MemorySwap}))
+    ctx.setProc.running = false
+    ctx.finishSet(0, 0, "")
+  }
+  assert.equal(inspect(id).HostConfig.Memory, mb * 1048576)
+  assert.equal(inspect(id).HostConfig.MemorySwap, -1)
+  sync()
+}
+
 async function main() {
   const initial = snapshot()
   target = initial.target
@@ -84,7 +102,7 @@ async function main() {
       const id = docker(["create", "--name", "docker-plugin-test-" + runId + "-" + i,
         "--label", label + "=" + runId, "--network", "none", "--read-only",
         "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "32",
-        "--memory", "64m", "--memory-swap", "64m", image, "sh", "-c", workload]).trim()
+        ...(i === 0 ? ["--memory", "64m", "--memory-swap", "64m"] : []), image, "sh", "-c", workload]).trim()
       assert(/^[a-f0-9]{64}$/.test(id))
       created.push(id)
     }
@@ -107,21 +125,13 @@ async function main() {
     assert(ctx.containers.every(c => c.status === "running" && c.cpuPercent !== ""))
     ok("snapshot collects real resource stats for multiple running containers")
 
-    const first = ctx.containers.find(c => c.fullId === created[0])
-    ctx.setMemory(first.name, 128)
-    owned(created[0])
-    const job = ctx.activeSet
-    while (ctx.activeSet === job) {
-      exec(Array.from(ctx.setProc.command))
-      const config = inspect(created[0]).HostConfig
-      console.log("# memory stage " + job.phase + ": " + JSON.stringify({memory: config.Memory, memorySwap: config.MemorySwap}))
-      ctx.setProc.running = false
-      ctx.finishSet(0, 0, "")
-    }
-    assert.equal(inspect(created[0]).HostConfig.Memory, 128 * 1048576)
-    assert.equal(inspect(created[1]).HostConfig.Memory, 64 * 1048576)
+    memory(created[0], 128)
+    assert.equal(inspect(created[1]).HostConfig.Memory, 0)
     ok("controller RAM update uses the full ID and leaves the other container unchanged")
-    sync()
+    memory(created[1], 96)
+    ok("an initially unlimited container accepts its first finite RAM limit")
+    memory(created[0], 64)
+    ok("a running container accepts a lower RAM limit and retains unlimited swap")
 
     const startedAt = inspect(created[0]).State.StartedAt
     action("restart", created[0])
@@ -130,12 +140,12 @@ async function main() {
 
     const c = ctx.containers.find(c => c.fullId === created[0])
     const logs = Model.logsCommand(target, c, false)
-    const dockerPart = logs.slice(logs.indexOf("--") + 1)
+    const dockerPart = logs.slice(logs.indexOf("env"))
     assert.match(exec(dockerPart), /\d{4}-\d{2}-\d{2}T.*disposable-log-/)
     ok("recent-log command reads timestamped output from the real container")
 
     const follow = Model.logsCommand(target, c, true)
-    const followCommand = follow.slice(follow.indexOf("--") + 1)
+    const followCommand = follow.slice(follow.indexOf("env"))
     await new Promise((resolve, reject) => {
       const child = spawn(followCommand[0], followCommand.slice(1), {stdio: ["ignore", "pipe", "pipe"]})
       let output = ""

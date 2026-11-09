@@ -202,7 +202,10 @@ assert(Model.logsCommand(remote, running, true).includes("--follow"), "live logs
 assertEqual(Model.logsCommand(null, running, true), [], "logs fail closed without a captured target")
 assertEqual(Model.logsCommand(remote, {fullId: "--help"}, false), [], "logs reject names and option-like IDs")
 assertEqual(Model.logsCommand(remote, exited, false).at(-1), "a".repeat(64), "stopped containers can expose recent logs")
-assert(!recentLogs.includes("bash") && !recentLogs.includes("sh"), "logs do not use shell interpolation")
+assertEqual(recentLogs[3], "bash", "logs use a portable wrapper when terminal hold flags are ignored")
+const maliciousNameLogs = Model.logsCommand(remote, {...running, name: "$(touch injected); untrusted-name"}, false)
+assertEqual(maliciousNameLogs[5], recentLogs[5], "untrusted container names cannot change the constant shell program")
+assert(recentLogs[5].includes('"$@"'), "Docker arguments are passed through quoted positional parameters")
 
 console.log(`\n${passes} passed, ${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

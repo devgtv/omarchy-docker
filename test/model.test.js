@@ -84,6 +84,13 @@ assertEqual(Model.clampMemMb(512, 4), 6, "clampMemMb survives a maximum below mi
 assertEqual(Model.clampMemMb(512, "abc"), 6, "clampMemMb falls back for NaN maximum")
 assertEqual(Model.clampMemMb(6, 6), 6, "clampMemMb handles equal bounds")
 
+assertEqual(Model.hostMemoryMb(8 * 1073741824), 8192, "hostMemoryMb respects hosts smaller than 16 GiB")
+assertEqual(Model.hostMemoryMb(64 * 1073741824), 65536, "hostMemoryMb supports RAM beyond signed 32-bit bytes")
+assertEqual(Model.hostMemoryMb(8192 * 1048576 + 999), 8192, "hostMemoryMb does not exceed actual RAM by rounding")
+for (const bytes of [0, -1, NaN, Infinity, "bad"]) {
+  assertEqual(Model.hostMemoryMb(bytes), 6, "hostMemoryMb safely handles " + bytes)
+}
+
 // ---------------------------------------------------------------------------
 // parseSnapshot
 // ---------------------------------------------------------------------------
@@ -121,6 +128,8 @@ assertEqual(unavailable.containers.length, 0, "parseSnapshot yields no container
 
 const empty = Model.parseSnapshot("")
 assertEqual(empty, { dockerAvailable: false, dockerVersion: "", hostMemBytes: 0, containers: [] }, "parseSnapshot handles empty text")
+assertEqual(Model.parseSnapshot("==HOST==\n6.7108864e+10").hostMemBytes, 67108864000, "parseSnapshot accepts scientific notation without truncating RAM")
+assertEqual(Model.parseSnapshot("==HOST==\n-1024").hostMemBytes, 0, "parseSnapshot rejects negative RAM")
 
 const noStats = "==DOCKER==\n25.0\n==HOST==\n1024\n==CONTAINERS==\nid1|/foo|img|running|0\n"
 assertEqual(Model.parseSnapshot(noStats).containers[0].cpuPercent, "", "parseSnapshot leaves stats blank when section is absent")
@@ -157,6 +166,7 @@ assert(Model.snapshotScript.indexOf("==HOST==") >= 0, "snapshotScript carries th
 assert(Model.snapshotScript.indexOf("==CONTAINERS==") >= 0, "snapshotScript carries the CONTAINERS section header")
 assert(Model.snapshotScript.indexOf("==STATS==") >= 0, "snapshotScript carries the STATS section header")
 assert(Model.snapshotScript.indexOf("docker stats --no-stream") >= 0, "snapshotScript uses non-streaming stats")
+assert(Model.snapshotScript.indexOf("docker info --format '{{.MemTotal}}'") >= 0, "snapshotScript queries the selected daemon's RAM")
 
 console.log(`\n${passes} passed, ${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

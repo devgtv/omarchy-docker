@@ -11,8 +11,7 @@ var snapshotScript = [
   "echo '==DOCKER=='",
   "docker version --format '{{.Server.Version}}' 2>/dev/null || echo unavailable",
   "echo '==HOST=='",
-  "mem=$(awk '/MemTotal/{print $2 * 1024}' /proc/meminfo 2>/dev/null)",
-  "if [ -z \"$mem\" ]; then mem=$(docker info --format '{{.MemTotal}}' 2>/dev/null); fi",
+  "mem=$(docker info --format '{{.MemTotal}}' 2>/dev/null)",
   "echo \"${mem:-0}\"",
   "echo '==CONTAINERS=='",
   "ids=$(docker ps -q 2>/dev/null)",
@@ -21,7 +20,7 @@ var snapshotScript = [
   "fi",
   "echo '==STATS=='",
   "if [ -n \"$ids\" ]; then",
-  "  docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' 2>/dev/null",
+  "  docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' $ids 2>/dev/null",
   "fi"
 ].join("\n")
 
@@ -68,6 +67,13 @@ function clampMemMb(mb, maxMb) {
   return Math.max(6, Math.min(max, n))
 }
 
+// Use the daemon's RAM (also correct for remote Docker contexts). Unknown RAM
+// leaves only the minimum available; never invent a 16 GiB host capacity.
+function hostMemoryMb(bytes) {
+  var n = Number(bytes)
+  return isFinite(n) && n > 0 ? Math.max(6, Math.floor(n / 1048576)) : 6
+}
+
 function parseSnapshot(text) {
   var result = {
     dockerAvailable: false,
@@ -96,8 +102,8 @@ function parseSnapshot(text) {
   result.dockerVersion = result.dockerAvailable ? version : ""
 
   var hostLines = sections["HOST"] || []
-  var hostBytes = parseInt(String(hostLines[0] || "").trim(), 10)
-  result.hostMemBytes = isFinite(hostBytes) ? hostBytes : 0
+  var hostBytes = Number(String(hostLines[0] || "").trim())
+  result.hostMemBytes = isFinite(hostBytes) && hostBytes > 0 ? hostBytes : 0
 
   // Stats index by container name.
   var statsByName = {}
@@ -142,6 +148,7 @@ if (typeof module !== "undefined") {
     formatBytes: formatBytes,
     formatMb: formatMb,
     clampMemMb: clampMemMb,
+    hostMemoryMb: hostMemoryMb,
     parseSnapshot: parseSnapshot
   }
 }

@@ -13,7 +13,7 @@ Panel {
 
   property bool dockerAvailable: false
   property string dockerVersion: ""
-  property int hostMemBytes: 0
+  property double hostMemBytes: 0
   property var containers: []
 
   // Keyboard cursor over the container list.
@@ -34,7 +34,7 @@ Panel {
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
   readonly property int refreshMs: Math.max(500, setting("refreshMs", 3000))
-  readonly property int hostMemMb: Math.max(16384, Math.round(hostMemBytes / 1048576))
+  readonly property int hostMemMb: Model.hostMemoryMb(hostMemBytes)
   readonly property int memMin: 6
   readonly property int memStep: 128
 

@@ -97,9 +97,11 @@ Panel {
     if (!name || !Model.validTarget(dockerTarget) || controlsBusy) return
     var container = containers.filter(function(c) { return c.name === name })[0]
     if (!Model.validContainer(container) || container.status !== "running") return
-    var value = cores === 0 ? 0 : Model.clampCpuCores(cores, hostCpuCount || 1)
+    // Docker treats NanoCPUs=0 as "leave unchanged" during update, so the
+    // Unlimited action maps to the daemon's full logical CPU capacity.
+    var value = cores === 0 ? (hostCpuCount || 1) : Model.clampCpuCores(cores, hostCpuCount || 1)
     var job = {name: name, id: container.fullId, value: value, target: dockerTarget}
-    setCpuOverride(name, value || (hostCpuCount || 1))
+    setCpuOverride(name, value)
     activeCpuSet = job
     actionError = ""
     cpuProc.command = Model.dockerCommand(job.target, ["update", "--cpus", String(value), "--", job.id])
@@ -950,9 +952,12 @@ Panel {
                   }
                   Text {
                     id: cpuValue
-                    text: root.cpuOverrides[containerRow.container.name] !== undefined
-                      ? root.effectiveCpu(containerRow.container).toFixed(1) + " cores"
-                      : (containerRow.container.cpuLimit > 0 ? containerRow.container.cpuLimit.toFixed(1) + " cores" : "Unlimited")
+                    text: {
+                      if (root.cpuOverrides[containerRow.container.name] !== undefined)
+                        return root.effectiveCpu(containerRow.container).toFixed(1) + " cores"
+                      var limit = Number(containerRow.container.cpuLimit || 0)
+                      return limit === 0 || limit >= (root.hostCpuCount || 1) ? "Unlimited" : limit.toFixed(1) + " cores"
+                    }
                     color: Qt.darker(root.bar.foreground, 1.4)
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.caption

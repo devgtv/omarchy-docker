@@ -198,7 +198,7 @@ ShellRoot {
         tryVerify(function() { return p.containers[0].cpuLimit === 0.5 && !p.controlsBusy })
         var cpuUnlimited = findChild(keys, "dockerCpuUnlimited-" + "a".repeat(64))
         mouseClick(cpuUnlimited)
-        tryVerify(function() { return p.containers[0].cpuLimit === 0 && !p.controlsBusy })
+        tryVerify(function() { return p.containers[0].cpuLimit === 4 && !p.controlsBusy })
         var row = findChild(keys, "dockerRow-" + "a".repeat(64))
         var restart = descendant(row, function(item) { return item.text === "Restart" && typeof item.clicked === "function" })
         verify(restart, "mouse action button must exist")

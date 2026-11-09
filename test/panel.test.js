@@ -145,7 +145,7 @@ test("CPU updates use a captured full ID and support unlimited/reset and errors"
   ctx.cpuProc.running = false
   ctx.finishCpu(0, 0, "")
   ctx.setCpu("web", 0)
-  assert.equal(ctx.cpuProc.command[ctx.cpuProc.command.indexOf("--cpus") + 1], "0")
+  assert.equal(ctx.cpuProc.command[ctx.cpuProc.command.indexOf("--cpus") + 1], "4")
   ctx.cpuProc.running = false
   ctx.finishCpu(1, 0, "not supported")
   assert.match(ctx.actionError, /CPU limit.*not supported/)

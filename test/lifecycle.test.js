@@ -104,7 +104,7 @@ function cpu(id, cores) {
   ctx.cpuProc.running = false
   ctx.finishCpu(0, 0, "")
   const config = inspect(id).HostConfig
-  assert.equal(config.NanoCpus, Math.round(cores * 1000000000))
+  assert.equal(config.NanoCpus, Math.round((cores || ctx.hostCpuCount) * 1000000000))
   sync()
 }
 
@@ -174,7 +174,8 @@ async function main() {
     assert.equal(inspect(created[1]).HostConfig.NanoCpus, 0)
     ok("CPU update applies the selected fractional core limit to only one container")
     cpu(created[0], 0)
-    ok("the controller restores unlimited CPU after a finite CPU limit")
+    assert.equal(inspect(created[0]).HostConfig.NanoCpus, ctx.hostCpuCount * 1000000000)
+    ok("the controller restores effective unlimited CPU by using the daemon's full core capacity")
 
     const startedAt = inspect(created[0]).State.StartedAt
     action("restart", created[0])

@@ -14,6 +14,10 @@
 - The popup identifies the selected Docker context and whether it uses a local socket or a network endpoint. `DOCKER_CONTEXT` takes precedence over `DOCKER_HOST`, matching Docker CLI behavior.
 - Snapshots and RAM updates explicitly select their captured target, so switching the default context does not redirect an already queued update. Host URLs are not displayed, to avoid exposing embedded credentials.
 - Open the last 200 timestamped log lines in your default terminal, or follow live output. Multiple log terminals can be open independently without blocking the panel.
+- Search by name, image, ID, state, health or Compose project/service. Search is case-insensitive and literal; multiple terms are combined with AND.
+- Combine state/project filters and optionally group by Compose project. Standalone containers appear after Compose projects; these controls do not modify Docker state.
+- Expand Details to view health, ports, mounts, uptime, Compose labels and Docker exit/OOM/error fields. A nonzero exit code alone does not identify why a container exited.
+- Copy the container name, full ID or port mappings from Details. Clipboard support requires `wl-copy`; copy failures are reported.
 
 ## Installation
 
@@ -46,6 +50,8 @@ omarchy plugin remove devgtv.docker
   - `Shift+r` request restart for the selected running container
   - `g` open recent logs for the selected container
   - `Shift+g` follow logs for the selected container
+  - `/` focus search; Enter/Down returns to list navigation, Escape leaves the search field
+  - `d` toggle details for the selected visible container
   - `Esc` close
 - The slider range goes from 6 MiB up to the Docker daemon's total RAM, including remote contexts. Keyboard and wheel adjustments use 128 MiB steps. If RAM cannot be detected, only the 6 MiB minimum is available.
 - Failed RAM updates show the Docker error in the popup. Rapid edits are queued per container, even if you change selection before the keyboard debounce finishes.
@@ -53,6 +59,9 @@ omarchy plugin remove devgtv.docker
 - Lifecycle actions and RAM updates do not run concurrently. Commands use full container IDs, so replacing a container with another of the same name does not redirect an already captured action. Successful operations refresh the list; failures appear in the popup. Starting runs the container workload, and stopping/restarting may interrupt services.
 - Logs are available for stopped containers too, subject to the Docker logging driver. The selected Docker target and full container ID are passed as quoted positional arguments to a constant Bash wrapper; no container name is interpolated into the shell program. Follow mode uses `docker logs --follow`; press Ctrl+C to stop following. After completion the exit status is shown and the terminal waits for Enter, including terminals whose desktop entries ignore `--hold`. Docker/logging-driver errors are displayed in that terminal; terminal-launch failures are logged by Quickshell. Logs may contain secrets: inspect them before sharing.
 - Changing a limit also sets `--memory-swap -1` (unlimited swap, not disabled swap). Lowering memory can cause a container's workload to be killed by the kernel's out-of-memory handler. Changes affect the selected Docker context, which may be remote.
+- Filters and grouping are session-local and combine with search. Stopped includes created/exited containers; paused, restarting, dead and removing have separate state filters. Reset filters clears search and filters, not the grouping preference.
+- Keyboard selection follows the full container ID across reordering; if that ID is filtered out, selection is clamped. Empty result lists cannot trigger actions. Search text does not invoke lifecycle, RAM or log shortcuts.
+- Detail metadata updates with snapshots. Published ports are distinguished from exposed-but-unpublished ports. Mount paths and runtime errors may expose sensitive information; inspect before sharing. Environment variables and healthcheck output are not collected.
 
 ## Configuration
 

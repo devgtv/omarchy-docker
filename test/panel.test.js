@@ -17,12 +17,16 @@ const ctx = vm.createContext({
   pendingSets: [], activeSet: null, keyboardEdits: {}, memOverrides: {},
   containers: [{name: "web", status: "running", fullId: "a".repeat(64), memLimitBytes: 512 * 1048576}, {name: "db", status: "running", fullId: "b".repeat(64), memLimitBytes: 1024 * 1048576}],
   selectedIndex: 0, hostMemMb: 8192, memMin: 6, memStep: 128,
+  searchQuery: "", statusFilter: "all", projectFilter: "", groupByCompose: false, previousVisible: [], expandedId: "", clipboardProc: {running: false},
   userInteracting: false, actionError: "", setProc: {running: false},
   refreshProc: {running: false},
   memDebounce: {running: false, restart() { this.running = true }}
 })
 const launched = []
 ctx.root = ctx
+Object.defineProperty(ctx, "visibleContainers", {get() {
+  return ctx.Model.visibleContainers(ctx.containers, ctx.searchQuery, ctx.statusFilter, ctx.projectFilter, ctx.groupByCompose)
+}})
 Object.defineProperty(ctx, "controlsBusy", {get() {
   return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.activeSet !== null || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.activeAction !== null || ctx.pendingAction !== null
 }})
@@ -212,5 +216,45 @@ test("log shortcuts respect selection and do not launch behind confirmations", (
   ctx.openLogs(ctx.containers[0], true)
   assert.equal(launched.length, count)
   ctx.cancelAction()
+})
+test("filtered lifecycle, RAM and logs use the visible container identity", () => {
+  ctx.cursorActive = true
+  ctx.searchQuery = "db"
+  ctx.selectedIndex = 0
+  ctx.selectedAction("toggle")
+  assert.equal(ctx.pendingAction.container.fullId, "b".repeat(64))
+  ctx.cancelAction()
+  ctx.selectedLogs(false)
+  assert.equal(launched.at(-1).at(-1), "b".repeat(64))
+  ctx.adjustSelectedMem(1)
+  assert.equal(ctx.keyboardEdits.db, 1152)
+  ctx.memDebounce.running = false
+  ctx.flushKeyboardEdits()
+  assert.equal(ctx.activeSet.id, "b".repeat(64))
+  finish()
+  ctx.searchQuery = "missing"
+  ctx.selectedAction("toggle")
+  assert.equal(ctx.pendingAction, null)
+  ctx.searchQuery = ""
+})
+test("details are keyed by full ID and cannot be changed behind confirmation", () => {
+  ctx.searchQuery = "db"
+  ctx.selectedDetails()
+  assert.equal(ctx.expandedId, "b".repeat(64))
+  ctx.pendingAction = {}
+  ctx.selectedDetails()
+  assert.equal(ctx.expandedId, "b".repeat(64))
+  ctx.pendingAction = null
+  ctx.selectedDetails()
+  assert.equal(ctx.expandedId, "")
+  ctx.searchQuery = ""
+})
+test("clipboard uses a constant program and reports process failures", () => {
+  ctx.copyInfo(ctx.containers[0], "id")
+  assert.equal(ctx.clipboardProc.command.at(-1), "a".repeat(64))
+  ctx.finishCopy(1, 0)
+  assert.match(ctx.actionError, /Could not copy/)
+  ctx.finishCopy(0, 0)
+  assert.equal(ctx.actionNotice, "Copied to clipboard")
 })
 console.log(`\n${passes} controller tests passed`)

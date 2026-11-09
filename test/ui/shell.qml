@@ -77,9 +77,75 @@ ShellRoot {
         suite.parent = keys
         var card = keys.parent.parent
         mouseMove(card, card.width + 20, 10)
+        var search = findChild(p, "dockerSearch")
+        keyClick("/")
+        verify(search.activeFocus)
+        for (var ch of "stopped") keyClick(ch)
+        compare(p.searchQuery, "stopped")
+        compare(p.visibleContainers.length, 1)
+        keyClick(Qt.Key_Return)
+        keyClick(Qt.Key_S)
+        compare(p.pendingAction.container.fullId, "b".repeat(64))
+        keyClick(Qt.Key_Escape)
+        p.searchQuery = "no-match"
+        compare(p.visibleContainers.length, 0)
+        keyClick(Qt.Key_S)
+        compare(p.pendingAction, null)
+        p.searchQuery = ""
+        var stateFilter = findChild(p, "dockerStateFilter")
+        stateFilter.forceActiveFocus()
+        keyClick(Qt.Key_Space)
+        keyClick(Qt.Key_Down)
+        keyClick(Qt.Key_Return)
+        compare(p.statusFilter, "running")
+        stateFilter.forceActiveFocus()
+        keyClick(Qt.Key_Space)
+        keyClick(Qt.Key_Down)
+        keyClick(Qt.Key_Return)
+        compare(p.statusFilter, "stopped")
+        compare(p.visibleContainers[0].fullId, "b".repeat(64))
+        p.statusFilter = "all"
+        var projectFilter = findChild(p, "dockerProjectFilter")
+        projectFilter.forceActiveFocus()
+        keyClick(Qt.Key_Space)
+        keyClick(Qt.Key_Down)
+        keyClick(Qt.Key_Return)
+        compare(p.projectFilter, "ui-shop")
+        compare(p.visibleContainers.length, 1)
+        p.projectFilter = ""
+        var original = p.containers
+        p.selectedIndex = 1
+        p.containers = [original[1], original[0]]
+        compare(p.visibleContainers[p.selectedIndex].fullId, "b".repeat(64))
+        p.groupByCompose = true
+        compare(p.visibleContainers[p.selectedIndex].fullId, "b".repeat(64))
+        verify(findChild(keys, "dockerGroup-" + "a".repeat(64)).visible)
+        verify(findChild(keys, "dockerGroup-" + "b".repeat(64)).visible)
+        p.containers = original
+        p.selectedIndex = 0
+        p.toggleDetails(p.visibleContainers[0])
+        wait(100)
+        var details = findChild(keys, "dockerDetailsText-" + "a".repeat(64))
+        verify(details.visible && details.text.indexOf("healthy") >= 0 && details.text.indexOf("127.0.0.1:8080") >= 0)
+        grabImage(card).save(Quickshell.env("DOCKER_PLUGIN_UI_OUTPUT") + "/details.png")
+        var copyName = findChild(keys, "dockerCopy-name-" + "a".repeat(64))
+        p.ensureCursorVisible(copyName)
+        wait(100)
+        mouseClick(copyName)
+        tryVerify(function() { return p.actionNotice === "Copied to clipboard" })
+        grabImage(card).save(Quickshell.env("DOCKER_PLUGIN_UI_OUTPUT") + "/details-ports.png")
+        p.toggleDetails(p.visibleContainers[0])
+        p.groupByCompose = false
+        p.searchQuery = ""
+        p.statusFilter = "all"
+        p.projectFilter = ""
+        p.selectedIndex = 0
+        findChild(p, "dockerScrollArea").contentItem.contentY = 0
+        wait(150)
         grabImage(card).save(Quickshell.env("DOCKER_PLUGIN_UI_OUTPUT") + "/panel.png")
         verify(findChild(keys, "dockerMemory-" + "a".repeat(64)).visible)
         verify(!findChild(keys, "dockerMemory-" + "b".repeat(64)).visible)
+        p.cursorActive = false
         keyClick(Qt.Key_Down)
         verify(p.cursorActive)
         compare(p.selectedIndex, 0)

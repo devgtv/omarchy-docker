@@ -5,8 +5,8 @@ const file = process.env.DOCKER_PLUGIN_UI_STATE
 if (!file) throw new Error("UI test state path required")
 const args = process.argv.slice(2)
 const initial = [
-  {id: "a".repeat(64), name: "ui-running-web", status: "running", memory: 67108864},
-  {id: "b".repeat(64), name: "ui-stopped-web", status: "exited", memory: 67108864}
+  {id: "a".repeat(64), name: "ui-running-web", status: "running", memory: 67108864, metadata: {project: "ui-shop", service: "web", health: "healthy", startedAt: "2026-11-09T12:00:00Z", exitCode: 0, ports: {"80/tcp": [{HostIp: "127.0.0.1", HostPort: "8080"}]}, mounts: [{Type: "bind", Source: "/test/data", Destination: "/data", RW: false}]}},
+  {id: "b".repeat(64), name: "ui-stopped-web", status: "exited", memory: 67108864, metadata: {exitCode: 137, oomKilled: true}}
 ]
 if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({containers: initial}))
 const state = JSON.parse(fs.readFileSync(file, "utf8"))
@@ -25,7 +25,7 @@ const c = state.containers.find(c => c.id === args.at(-1))
 if (action === "version") out("29.0-test")
 if (action === "info") out("8589934592")
 if (action === "ps") out(state.containers.filter(c => args.includes("-aq") || c.status === "running").map(c => c.id).join("\n"))
-if (action === "inspect") out(state.containers.map(c => `${c.id}|/${c.name}|busybox:test|${c.status}|${c.memory}`).join("\n"))
+if (action === "inspect") out(state.containers.map(c => `${c.id}|/${c.name}|busybox:test|${c.status}|${c.memory}|${JSON.stringify(c.metadata || {})}`).join("\n"))
 if (action === "stats") out(state.containers.filter(c => c.status === "running").map(c => `${c.name}|1.00%|8MiB / 8GiB|0.10%`).join("\n"))
 if (!["start", "stop", "restart", "update", "logs"].includes(action) || !c) fail("Invalid fake Docker test command")
 if (state.failWrites && action !== "logs") fail("Synthetic permission denied for UI test")

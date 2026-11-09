@@ -18,6 +18,14 @@ Panel {
   property var dockerTarget: null
   property double hostMemBytes: 0
   property var containers: []
+  property string searchQuery: ""
+  property string statusFilter: "all"
+  property string projectFilter: ""
+  property bool groupByCompose: false
+  property string expandedId: ""
+  property var previousVisible: []
+  readonly property var projectList: Model.projects(containers)
+  readonly property var visibleContainers: Model.visibleContainers(containers, searchQuery, statusFilter, projectFilter, groupByCompose)
 
   // Keyboard cursor over the container list.
   property int selectedIndex: 0
@@ -48,6 +56,8 @@ Panel {
   readonly property int hostMemMb: Model.hostMemoryMb(hostMemBytes)
   readonly property int memMin: 6
   readonly property int memStep: 128
+
+  Process { id: clipboardProc; onExited: function(code, status) { root.finishCopy(code, status) } }
 
   function containerLimitMb(c) {
     return c && c.memLimitBytes > 0 ? Math.round(c.memLimitBytes / 1048576) : 0
@@ -157,26 +167,26 @@ Panel {
   }
 
   function moveCursor(delta) {
-    if (containers.length === 0) return
+    if (visibleContainers.length === 0) return
     var next = selectedIndex + delta
     if (next < 0) next = 0
-    if (next > containers.length - 1) next = containers.length - 1
+    if (next > visibleContainers.length - 1) next = visibleContainers.length - 1
     selectedIndex = next
   }
 
   function clampCursor() {
-    if (containers.length === 0) {
+    if (visibleContainers.length === 0) {
       selectedIndex = 0
       return
     }
-    if (selectedIndex > containers.length - 1) selectedIndex = containers.length - 1
+    if (selectedIndex > visibleContainers.length - 1) selectedIndex = visibleContainers.length - 1
     if (selectedIndex < 0) selectedIndex = 0
   }
 
   function adjustSelectedMem(deltaSteps) {
     if (actionProc.running || pendingAction !== null) return
-    if (selectedIndex < 0 || selectedIndex >= containers.length) return
-    var c = containers[selectedIndex]
+    if (selectedIndex < 0 || selectedIndex >= visibleContainers.length) return
+    var c = visibleContainers[selectedIndex]
     if (!c || c.status !== "running") return
     var next = Model.clampMemMb(effectiveMb(c) + deltaSteps * memStep, hostMemMb)
     setOverride(c.name, next)
@@ -231,8 +241,8 @@ Panel {
   }
 
   function selectedAction(action) {
-    if (!cursorActive || selectedIndex < 0 || selectedIndex >= containers.length) return
-    var c = containers[selectedIndex]
+    if (!cursorActive || selectedIndex < 0 || selectedIndex >= visibleContainers.length) return
+    var c = visibleContainers[selectedIndex]
     requestAction(action === "toggle" ? (c.status === "running" ? "stop" : "start") : action, c)
   }
 
@@ -245,8 +255,35 @@ Panel {
   }
 
   function selectedLogs(follow) {
-    if (!cursorActive || selectedIndex < 0 || selectedIndex >= containers.length) return
-    openLogs(containers[selectedIndex], follow)
+    if (!cursorActive || selectedIndex < 0 || selectedIndex >= visibleContainers.length) return
+    openLogs(visibleContainers[selectedIndex], follow)
+  }
+
+  function reconcileSelection() {
+    selectedIndex = Model.selectionIndex(previousVisible, visibleContainers, selectedIndex)
+    previousVisible = visibleContainers.slice()
+  }
+
+  function toggleDetails(c) {
+    if (!c || pendingAction !== null) return
+    expandedId = expandedId === c.fullId ? "" : c.fullId
+  }
+
+  function copyInfo(c, field) {
+    if (!c || pendingAction !== null || clipboardProc.running) return
+    var text = field === "ports" ? Model.portsText(c) : field === "id" ? c.fullId : field === "name" ? c.name : ""
+    if (!text) return
+    clipboardProc.command = Model.clipboardCommand(text)
+    clipboardProc.running = true
+  }
+
+  function finishCopy(code, status) {
+    if (code !== 0 || status !== 0) actionError = "Could not copy to clipboard. Check that wl-copy and a Wayland clipboard are available."
+    else actionNotice = "Copied to clipboard"
+  }
+
+  function selectedDetails() {
+    if (cursorActive) toggleDetails(visibleContainers[selectedIndex])
   }
 
   function ensureCursorVisible(item) {
@@ -278,7 +315,7 @@ Panel {
     }
   }
 
-  onContainersChanged: clampCursor()
+  onVisibleContainersChanged: reconcileSelection()
 
   Timer {
     interval: root.refreshMs
@@ -300,7 +337,12 @@ Panel {
         var snap = Model.parseSnapshot(String(text || ""))
         root.dockerAvailable = snap.dockerAvailable
         root.dockerVersion = snap.dockerVersion
-        if (JSON.stringify(root.dockerTarget) !== JSON.stringify(snap.target)) root.memOverrides = ({})
+        if (JSON.stringify(root.dockerTarget) !== JSON.stringify(snap.target)) {
+          root.memOverrides = ({})
+          root.expandedId = ""
+          root.previousVisible = []
+          root.selectedIndex = 0
+        }
         root.dockerTarget = snap.target
         root.hostMemBytes = snap.hostMemBytes
         root.containers = snap.containers
@@ -355,7 +397,7 @@ Panel {
       id: keyCatcher
       objectName: "dockerKeyCatcher"
       anchors.fill: parent
-      blocked: root.pendingAction !== null
+      blocked: root.pendingAction !== null || searchField.activeFocus || stateSelector.activeFocus || projectSelector.activeFocus
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         if (dy !== 0) root.moveCursor(dy)
@@ -370,6 +412,8 @@ Panel {
         else if (t === "R") root.selectedAction("restart")
         else if (t === "g") root.selectedLogs(false)
         else if (t === "G") root.selectedLogs(true)
+        else if (t === "d") root.selectedDetails()
+        else if (t === "/" && !root.controlsBusy) searchField.forceActiveFocus()
       }
 
       ScrollView {
@@ -453,6 +497,94 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
+          TextField {
+            id: searchField
+            objectName: "dockerSearch"
+            width: parent.width
+            visible: root.dockerAvailable && root.containers.length > 0
+            enabled: !root.controlsBusy
+            placeholderText: "Search name, image or Compose project…"
+            text: root.searchQuery
+            onTextEdited: root.searchQuery = text
+            color: root.bar.foreground
+            placeholderTextColor: Qt.darker(root.bar.foreground, 1.4)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.body
+            background: Rectangle {
+              color: root.bar.background
+              border.color: searchField.activeFocus ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.8)
+              radius: Style.space(4)
+            }
+            Keys.onEscapePressed: function(event) { keyCatcher.forceActiveFocus(); event.accepted = true }
+            Keys.onReturnPressed: function(event) { keyCatcher.forceActiveFocus(); root.cursorActive = true; event.accepted = true }
+            Keys.onDownPressed: function(event) { keyCatcher.forceActiveFocus(); root.cursorActive = true; event.accepted = true }
+          }
+
+          Flow {
+            width: parent.width
+            visible: root.dockerAvailable && root.containers.length > 0
+            spacing: Style.space(6)
+            ComboBox {
+              id: stateSelector
+              objectName: "dockerStateFilter"
+              width: Math.min(implicitWidth, parent.width)
+              enabled: !root.controlsBusy
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              palette.button: root.bar.background
+              palette.buttonText: root.bar.foreground
+              model: ["All states", "Running", "Stopped / created", "Paused", "Restarting", "Dead", "Removing"]
+              property var states: ["all", "running", "stopped", "paused", "restarting", "dead", "removing"]
+              currentIndex: states.indexOf(root.statusFilter)
+              onActivated: function(index) { root.statusFilter = states[index]; keyCatcher.forceActiveFocus() }
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            }
+            ComboBox {
+              id: projectSelector
+              objectName: "dockerProjectFilter"
+              width: Math.min(implicitWidth, parent.width)
+              enabled: !root.controlsBusy
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              palette.button: root.bar.background
+              palette.buttonText: root.bar.foreground
+              model: ["All projects"].concat(root.projectList)
+              currentIndex: root.projectFilter === "" ? 0 : root.projectList.indexOf(root.projectFilter) + 1
+              displayText: root.projectFilter || "All projects"
+              onActivated: function(index) { root.projectFilter = index === 0 ? "" : root.projectList[index - 1]; keyCatcher.forceActiveFocus() }
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            }
+            Ui.Button {
+              objectName: "dockerGroupToggle"
+              text: root.groupByCompose ? "Compose groups: on" : "Compose groups: off"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              fontSize: Style.font.caption
+              bordered: true
+              enabled: !root.controlsBusy
+              onClicked: root.groupByCompose = !root.groupByCompose
+            }
+            Ui.Button {
+              text: "Reset filters"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              fontSize: Style.font.caption
+              bordered: true
+              enabled: !root.controlsBusy
+              onClicked: { root.searchQuery = ""; root.statusFilter = "all"; root.projectFilter = ""; keyCatcher.forceActiveFocus() }
+            }
+          }
+
+          Text {
+            visible: root.dockerAvailable && root.containers.length > 0
+            width: parent.width
+            text: root.visibleContainers.length === 0 ? "No containers match these filters." : root.visibleContainers.length + " of " + root.containers.length + " containers shown"
+            color: root.bar.foreground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.Wrap
+          }
+
           PanelSeparator {
             visible: !root.dockerAvailable
             foreground: root.bar.foreground
@@ -492,7 +624,7 @@ Panel {
 
           // ---------- Containers ----------
           Repeater {
-            model: root.containers
+            model: root.visibleContainers
 
             delegate: CursorSurface {
               id: containerRow
@@ -517,6 +649,19 @@ Panel {
                 anchors.leftMargin: Style.space(10)
                 anchors.rightMargin: Style.space(10)
                 spacing: Style.space(6)
+
+                Text {
+                  objectName: "dockerGroup-" + containerRow.container.fullId
+                  visible: root.groupByCompose && (containerRow.index === 0 || (root.visibleContainers[containerRow.index - 1].project || "") !== (containerRow.container.project || ""))
+                  width: parent.width
+                  text: containerRow.container.project ? "Compose: " + containerRow.container.project : "Standalone containers"
+                  textFormat: Text.PlainText
+                  wrapMode: Text.Wrap
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                }
 
                 // Row 1: status dot · name · cpu/mem
                 Item {
@@ -568,7 +713,7 @@ Panel {
 
                 // Row 2: image
                 Text {
-                  text: containerRow.container.status + " · " + containerRow.container.image + " · " + containerRow.container.id
+                  text: containerRow.container.status + (containerRow.container.health ? " · " + containerRow.container.health : "") + " · " + containerRow.container.image + " · " + containerRow.container.id
                   textFormat: Text.PlainText
                   color: Qt.darker(root.bar.foreground, 1.6)
                   font.family: root.bar.fontFamily
@@ -595,6 +740,16 @@ Panel {
                     }
                   }
                   Ui.Button {
+                    objectName: "dockerDetails-" + containerRow.container.fullId
+                    text: root.expandedId === containerRow.container.fullId ? "Hide details" : "Details"
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    fontSize: Style.font.caption
+                    bordered: true
+                    enabled: root.pendingAction === null
+                    onClicked: root.toggleDetails(containerRow.container)
+                  }
+                  Ui.Button {
                     text: "Logs"
                     foreground: root.bar.foreground
                     fontFamily: root.bar.fontFamily
@@ -611,6 +766,38 @@ Panel {
                     bordered: true
                     enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && root.pendingAction === null
                     onClicked: root.openLogs(containerRow.container, true)
+                  }
+                }
+
+                Text {
+                  objectName: "dockerDetailsText-" + containerRow.container.fullId
+                  visible: root.expandedId === containerRow.container.fullId
+                  width: parent.width
+                  text: visible ? Model.detailsText(containerRow.container, Date.now()) : ""
+                  textFormat: Text.PlainText
+                  wrapMode: Text.WrapAnywhere
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Flow {
+                  visible: root.expandedId === containerRow.container.fullId
+                  width: parent.width
+                  spacing: Style.space(6)
+                  Repeater {
+                    model: ["name", "id", "ports"]
+                    delegate: Ui.Button {
+                      required property string modelData
+                      objectName: "dockerCopy-" + modelData + "-" + containerRow.container.fullId
+                      text: "Copy " + modelData
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      fontSize: Style.font.caption
+                      bordered: true
+                      enabled: !clipboardProc.running && root.pendingAction === null && (modelData !== "ports" || Model.portsText(containerRow.container) !== "")
+                      onClicked: root.copyInfo(containerRow.container, modelData)
+                    }
                   }
                 }
 
@@ -678,7 +865,7 @@ Panel {
               // Do not steal slider clicks: HoverHandler only tracks the mouse and
               // updates the keyboard cursor without consuming the click.
               HoverHandler {
-                onHoveredChanged: if (hovered) {
+                onHoveredChanged: if (hovered && !searchField.activeFocus && root.pendingAction === null) {
                   root.cursorActive = true
                   root.selectedIndex = containerRow.index
                 }
@@ -695,7 +882,7 @@ Panel {
           Text {
             visible: root.containers.length > 0
             width: parent.width
-            text: "j/k navigate · h/l RAM · s start/stop · Shift+r restart · g logs · Shift+g follow · r refresh"
+            text: "/ search · d details · j/k navigate · h/l RAM · s start/stop · Shift+r restart · g logs · Shift+g follow · r refresh"
             wrapMode: Text.WordWrap
             color: Qt.darker(root.bar.foreground, 1.6)
             font.family: root.bar.fontFamily

@@ -40,7 +40,7 @@ Panel {
   property var pendingAction: null
   property var activeAction: null
   property int mutationRevision: 0
-  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || pendingSets.length > 0 || actionProc.running || pendingAction !== null
+  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || actionProc.running || activeAction !== null || pendingAction !== null
 
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
@@ -123,7 +123,7 @@ Panel {
   }
 
   function startNextSet() {
-    if (setProc.running || pendingSets.length === 0) return
+    if (setProc.running || activeSet !== null || pendingSets.length === 0) return
     var job = pendingSets[0]
     pendingSets = pendingSets.slice(1)
     activeSet = job
@@ -140,8 +140,12 @@ Panel {
     if (!job) return
     if (exitCode === 0 && exitStatus === 0 && job.phase === "swap") {
       job.phase = "memory"
-      setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", job.id])
-      setProc.running = true
+      // Process.exited can be emitted before running becomes false. Starting
+      // another command synchronously here may be lost by the old process exit.
+      Qt.callLater(function() {
+        setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.id])
+        setProc.running = true
+      })
       return
     }
     activeSet = null
@@ -149,8 +153,7 @@ Panel {
       actionError = "Could not update " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode) + (job.phase === "memory" ? " (swap was already set to unlimited)" : "")
     var queued = pendingSets.some(function(item) { return item.name === job.name })
     if (!queued && keyboardEdits[job.name] === undefined) clearOverride(job.name)
-    startNextSet()
-    refresh()
+    Qt.callLater(function() { root.startNextSet(); root.refresh() })
   }
 
   function moveCursor(delta) {
@@ -224,7 +227,7 @@ Panel {
     if (exitCode !== 0 || exitStatus !== 0)
       actionError = "Could not " + job.action + " " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
     else actionNotice = "Completed " + job.action + " for " + job.name
-    refresh()
+    Qt.callLater(root.refresh)
   }
 
   function selectedAction(action) {

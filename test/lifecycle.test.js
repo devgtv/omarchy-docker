@@ -34,7 +34,7 @@ function snapshot() { return Model.parseSnapshot(exec(["bash", "-c", Model.snaps
 const source = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
 const functions = [...source.matchAll(/^  function (\w+)\(([^\n]*)\) \{([\s\S]*?)^  \}/gm)]
   .map(match => `function ${match[1]}(${match[2]}) {${match[3]}\n}`)
-const ctx = vm.createContext({Model, dockerAvailable: true, dockerTarget: null,
+const ctx = vm.createContext({Model, Qt: {callLater(fn) { fn() }}, dockerAvailable: true, dockerTarget: null,
   containers: [], pendingSets: [], activeSet: null, keyboardEdits: {}, memOverrides: {},
   pendingAction: null, activeAction: null, actionError: "", actionNotice: "",
   userInteracting: false, mutationRevision: 0, selectedIndex: 0, cursorActive: true,
@@ -44,7 +44,7 @@ const ctx = vm.createContext({Model, dockerAvailable: true, dockerTarget: null,
 })
 ctx.root = ctx
 Object.defineProperty(ctx, "controlsBusy", {get() {
-  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.pendingAction !== null
+  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.activeSet !== null || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.activeAction !== null || ctx.pendingAction !== null
 }})
 vm.runInContext(functions.join("\n"), ctx)
 function sync() {

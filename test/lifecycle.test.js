@@ -109,6 +109,9 @@ async function main() {
       assert(/^[a-f0-9]{64}$/.test(id))
       created.push(id)
     }
+    // Check the projection directly as well: collector stderr is intentionally
+    // suppressed, so a Go-template error must not masquerade as an empty list.
+    assert.equal(docker(["inspect", "--format", Model.inspectFormat, ...created]).trim().split("\n").length, 2)
     sync()
     assert.equal(ctx.containers.length, 2)
     assert(ctx.containers.every(c => c.status === "created" && c.cpuPercent === ""))

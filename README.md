@@ -1,6 +1,6 @@
 # Omarchy Control Docker
 
-`devgtv.docker` — bar widget for the Omarchy Shell (Quickshell) that lists Docker containers, controls their lifecycle and adjusts running containers' RAM limits.
+`devgtv.docker` — bar widget for the Omarchy Shell (Quickshell) that lists Docker containers, controls their lifecycle and adjusts running containers' CPU and RAM limits.
 
 ![preview](preview.png)
 
@@ -9,7 +9,7 @@
 - Adds a Docker icon to the bar.
 - Click the icon to open a popup with running and stopped containers. Resource stats and RAM sliders are shown for running containers.
 - For each container you can see its status, CPU and used memory.
-- A slider sets the RAM limit of the selected container (`docker update --memory ... --memory-swap -1`).
+- Sliders set the RAM and CPU limits of running containers. Resource presets provide common starting points.
 - The popup auto-refreshes every 3 seconds.
 - The popup identifies the selected Docker context and whether it uses a local socket or a network endpoint. `DOCKER_CONTEXT` takes precedence over `DOCKER_HOST`, matching Docker CLI behavior.
 - Snapshots and RAM updates explicitly select their captured target, so switching the default context does not redirect an already queued update. Host URLs are not displayed, to avoid exposing embedded credentials.
@@ -54,11 +54,13 @@ omarchy plugin remove devgtv.docker
   - `d` toggle details for the selected visible container
   - `Esc` close
 - The slider range goes from 6 MiB up to the Docker daemon's total RAM, including remote contexts. Keyboard and wheel adjustments use 128 MiB steps. If RAM cannot be detected, only the 6 MiB minimum is available.
+- RAM presets set 256 MiB, 512 MiB or 1 GiB. CPU can be adjusted from 0.1 cores to the daemon's logical CPU count, or set with 0.5/1/2-core presets. The Unlimited button sets the daemon's full logical CPU capacity; this is effectively uncapped beyond the host itself. Docker ignores a zero CPU update rather than clearing a prior quota, so the panel uses the daemon maximum instead. The reported CPU count also bounds the slider and disables presets above that capacity.
 - Failed RAM updates show the Docker error in the popup. Rapid edits are queued per container, even if you change selection before the keyboard debounce finishes.
 - Start is available for created/exited containers; stop and restart are available for running containers. Other states remain read-only. Every lifecycle action asks for confirmation, showing the container and Docker target. Cancel is selected by default; use arrows or Tab to select Confirm, then Enter. Escape cancels. Closing the panel also cancels an unconfirmed action.
 - Lifecycle actions and RAM updates do not run concurrently. Commands use full container IDs, so replacing a container with another of the same name does not redirect an already captured action. Successful operations refresh the list; failures appear in the popup. Starting runs the container workload, and stopping/restarting may interrupt services.
 - Logs are available for stopped containers too, subject to the Docker logging driver. The selected Docker target and full container ID are passed as quoted positional arguments to a constant Bash wrapper; no container name is interpolated into the shell program. Follow mode uses `docker logs --follow`; press Ctrl+C to stop following. After completion the exit status is shown and the terminal waits for Enter, including terminals whose desktop entries ignore `--hold`. Docker/logging-driver errors are displayed in that terminal; terminal-launch failures are logged by Quickshell. Logs may contain secrets: inspect them before sharing.
 - Changing a limit also sets `--memory-swap -1` (unlimited swap, not disabled swap). Lowering memory can cause a container's workload to be killed by the kernel's out-of-memory handler. Changes affect the selected Docker context, which may be remote.
+- CPU and RAM updates apply to the running container only. They do not edit Compose files and may be lost when Compose or another orchestrator recreates the container. The panel warns about this beside resource controls. CPU limits constrain available processing time; they do not reserve CPU cores. The Unlimited preset uses the daemon's total logical CPU count because Docker's update API treats a zero NanoCpus value as unchanged.
 - Filters and grouping are session-local and combine with search. Stopped includes created/exited containers; paused, restarting, dead and removing have separate state filters. Reset filters clears search and filters, not the grouping preference.
 - Keyboard selection follows the full container ID across reordering; if that ID is filtered out, selection is clamped. Empty result lists cannot trigger actions. Search text does not invoke lifecycle, RAM or log shortcuts.
 - Detail metadata updates with snapshots. Published ports are distinguished from exposed-but-unpublished ports. Mount paths and runtime errors may expose sensitive information; inspect before sharing. Environment variables and healthcheck output are not collected.
@@ -79,7 +81,7 @@ Default is 3000 ms.
 ## Implementation details
 
 - Data is collected by a Quickshell `Process` running `docker ps`, `docker inspect` and `docker stats`.
-- A limit change first applies `--memory <MB>m --memory-swap <2×MB>m`, then lifts the temporary swap bound with `--memory-swap -1`. Applying a finite valid pair first avoids runtime errors observed when increasing RAM directly to unlimited swap. If the second step fails, the RAM change and temporary combined memory+swap limit remain applied; the popup explicitly reports that partial change.
+- A RAM limit change first applies `--memory <MB>m --memory-swap <2×MB>m`, then lifts the temporary swap bound with `--memory-swap -1`. Applying a finite valid pair first avoids runtime errors observed when increasing RAM directly to unlimited swap. If the second step fails, the RAM change and temporary combined memory+swap limit remain applied; the popup explicitly reports that partial change. CPU limits use Docker's `--cpus` setting. The Unlimited preset sets the value to the daemon's full logical CPU count because `--cpus 0` is ignored by Docker updates when a previous limit exists.
 - The user needs access to the selected Docker daemon (for example via the `docker` group or rootless Docker). Membership in the `docker` group effectively grants root-level access; this plugin does not elevate privileges.
 
 ## Testing Model.js locally

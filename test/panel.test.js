@@ -16,7 +16,7 @@ const ctx = vm.createContext({
   actionNotice: "", mutationRevision: 0,
   pendingSets: [], activeSet: null, keyboardEdits: {}, memOverrides: {},
   containers: [{name: "web", status: "running", fullId: "a".repeat(64), memLimitBytes: 512 * 1048576}, {name: "db", status: "running", fullId: "b".repeat(64), memLimitBytes: 1024 * 1048576}],
-  selectedIndex: 0, hostMemMb: 8192, memMin: 6, memStep: 128,
+  selectedIndex: 0, hostMemMb: 8192, hostCpuCount: 4, cpuOverrides: {}, activeCpuSet: null, cpuProc: {running: false}, memMin: 6, memStep: 128,
   searchQuery: "", statusFilter: "all", projectFilter: "", groupByCompose: false, previousVisible: [], expandedId: "", clipboardProc: {running: false},
   userInteracting: false, actionError: "", setProc: {running: false},
   refreshProc: {running: false},
@@ -28,7 +28,7 @@ Object.defineProperty(ctx, "visibleContainers", {get() {
   return ctx.Model.visibleContainers(ctx.containers, ctx.searchQuery, ctx.statusFilter, ctx.projectFilter, ctx.groupByCompose)
 }})
 Object.defineProperty(ctx, "controlsBusy", {get() {
-  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.activeSet !== null || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.activeAction !== null || ctx.pendingAction !== null
+  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.activeSet !== null || ctx.pendingSets.length > 0 || ctx.cpuProc.running || ctx.activeCpuSet !== null || ctx.actionProc.running || ctx.activeAction !== null || ctx.pendingAction !== null
 }})
 vm.runInContext(functions.join("\n"), ctx)
 let passes = 0
@@ -133,6 +133,23 @@ test("refresh waits for interaction and pending keyboard edits", () => {
   ctx.memDebounce.running = false
   ctx.refresh()
   assert.equal(ctx.refreshProc.running, true)
+})
+test("CPU updates use a captured full ID and support unlimited/reset and errors", () => {
+  ctx.cpuProc.command = []
+  ctx.dockerTarget = {kind: "context", value: "test"}
+  ctx.setCpu("web", 1.5)
+  assert.equal(ctx.activeCpuSet.id, "a".repeat(64))
+  assert.equal(ctx.cpuProc.command.at(-1), "a".repeat(64))
+  assert.equal(ctx.cpuProc.command[ctx.cpuProc.command.indexOf("--cpus") + 1], "1.5")
+  assert.equal(ctx.controlsBusy, true)
+  ctx.cpuProc.running = false
+  ctx.finishCpu(0, 0, "")
+  ctx.setCpu("web", 0)
+  assert.equal(ctx.cpuProc.command[ctx.cpuProc.command.indexOf("--cpus") + 1], "4")
+  ctx.cpuProc.running = false
+  ctx.finishCpu(1, 0, "not supported")
+  assert.match(ctx.actionError, /CPU limit.*not supported/)
+  assert.equal(ctx.cpuOverrides.web, undefined)
 })
 test("requesting lifecycle actions never executes before confirmation", () => {
   ctx.requestAction("stop", ctx.containers[0])

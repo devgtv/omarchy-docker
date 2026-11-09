@@ -5,6 +5,7 @@ import Quickshell.Io
 import qs.Ui
 import qs.Ui as Ui
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 Panel {
@@ -223,6 +224,19 @@ Panel {
     requestAction(action === "toggle" ? (c.status === "running" ? "stop" : "start") : action, c)
   }
 
+  function openLogs(container, follow) {
+    if (!dockerAvailable || pendingAction !== null) return
+    var command = Model.logsCommand(dockerTarget, container, follow)
+    if (command.length === 0) return
+    Quickshell.execDetached(command)
+    actionNotice = "Requested " + (follow ? "live logs" : "logs") + " for " + container.name
+  }
+
+  function selectedLogs(follow) {
+    if (!cursorActive || selectedIndex < 0 || selectedIndex >= containers.length) return
+    openLogs(containers[selectedIndex], follow)
+  }
+
   function ensureCursorVisible(item) {
     if (!item || !scrollArea) return
     var flick = scrollArea.contentItem
@@ -340,6 +354,8 @@ Panel {
         if (t === "r") root.refresh()
         else if (t === "s") root.selectedAction("toggle")
         else if (t === "R") root.selectedAction("restart")
+        else if (t === "g") root.selectedLogs(false)
+        else if (t === "G") root.selectedLogs(true)
       }
 
       ScrollView {
@@ -475,7 +491,7 @@ Panel {
               hasCursor: root.cursorActive && root.selectedIndex === index
               onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(containerRow)
               foreground: root.bar.foreground
-              fill: Style.hoverFillFor(root.bar.foreground, Color.accent)
+              fill: Style.hoverFillFor(root.bar.foreground, Commons.Color.accent)
 
               Column {
                 id: rowColumn
@@ -494,7 +510,7 @@ Panel {
                   Text {
                     id: statusDot
                     text: "●"
-                    color: containerRow.container.status === "running" ? Color.accent : Qt.darker(root.bar.foreground, 1.6)
+                    color: containerRow.container.status === "running" ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.body
                     anchors.left: parent.left
@@ -561,6 +577,24 @@ Panel {
                       enabled: !root.controlsBusy && root.dockerAvailable && Model.validTarget(root.dockerTarget)
                       onClicked: root.requestAction(modelData, containerRow.container)
                     }
+                  }
+                  Ui.Button {
+                    text: "Logs"
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    fontSize: Style.font.caption
+                    bordered: true
+                    enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && root.pendingAction === null
+                    onClicked: root.openLogs(containerRow.container, false)
+                  }
+                  Ui.Button {
+                    text: "Follow logs"
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    fontSize: Style.font.caption
+                    bordered: true
+                    enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && root.pendingAction === null
+                    onClicked: root.openLogs(containerRow.container, true)
                   }
                 }
 
@@ -644,7 +678,7 @@ Panel {
           Text {
             visible: root.containers.length > 0
             width: parent.width
-            text: "j/k navigate · h/l RAM · s start/stop · Shift+r restart · r refresh"
+            text: "j/k navigate · h/l RAM · s start/stop · Shift+r restart · g logs · Shift+g follow · r refresh"
             wrapMode: Text.WordWrap
             color: Qt.darker(root.bar.foreground, 1.6)
             font.family: root.bar.fontFamily

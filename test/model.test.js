@@ -194,5 +194,15 @@ for (const status of ["paused", "restarting", "dead", "removing"]) {
   assert(!Model.canContainerAction("restart", {fullId: "a".repeat(64), status}), "unsupported state " + status + " is read-only")
 }
 
+const recentLogs = Model.logsCommand(remote, {...running, name: "web"}, false)
+assertEqual(recentLogs[0], "xdg-terminal-exec", "logs use the default terminal launcher")
+assertEqual(recentLogs.slice(-6), ["logs", "--tail", "200", "--timestamps", "--", "b".repeat(64)], "recent logs have a bounded tail and full container ID")
+assert(!recentLogs.includes("--follow"), "recent logs do not follow by default")
+assert(Model.logsCommand(remote, running, true).includes("--follow"), "live logs explicitly opt into following")
+assertEqual(Model.logsCommand(null, running, true), [], "logs fail closed without a captured target")
+assertEqual(Model.logsCommand(remote, {fullId: "--help"}, false), [], "logs reject names and option-like IDs")
+assertEqual(Model.logsCommand(remote, exited, false).at(-1), "a".repeat(64), "stopped containers can expose recent logs")
+assert(!recentLogs.includes("bash") && !recentLogs.includes("sh"), "logs do not use shell interpolation")
+
 console.log(`\n${passes} passed, ${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

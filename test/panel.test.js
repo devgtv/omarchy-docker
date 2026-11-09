@@ -9,6 +9,7 @@ const functions = [...source.matchAll(/^  function (\w+)\(([^\n]*)\) \{([\s\S]*?
   .map(match => `function ${match[1]}(${match[2]}) {${match[3]}\n}`)
 const ctx = vm.createContext({
   Model: require("../Model.js"),
+  Quickshell: {execDetached(command) { launched.push(Array.from(command)) }},
   dockerTarget: {kind: "context", value: "test", endpoint: "unix:///test.sock"},
   dockerAvailable: true, pendingAction: null, activeAction: null, actionProc: {running: false},
   actionNotice: "", mutationRevision: 0,
@@ -19,6 +20,7 @@ const ctx = vm.createContext({
   refreshProc: {running: false},
   memDebounce: {running: false, restart() { this.running = true }}
 })
+const launched = []
 ctx.root = ctx
 Object.defineProperty(ctx, "controlsBusy", {get() {
   return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.pendingAction !== null
@@ -171,5 +173,25 @@ test("snapshots record the current mutation revision", () => {
   ctx.refreshProc.running = false
   ctx.refresh()
   assert.equal(ctx.refreshProc.revision, ctx.mutationRevision)
+})
+test("recent and follow logs launch independently without blocking the panel", () => {
+  ctx.openLogs(ctx.containers[0], false)
+  ctx.openLogs(ctx.containers[1], true)
+  assert.equal(launched.length, 2)
+  assert.equal(launched[0].includes("--follow"), false)
+  assert.equal(launched[1].includes("--follow"), true)
+  assert.equal(launched[0].at(-1), "a".repeat(64))
+  assert.equal(ctx.controlsBusy, false)
+})
+test("log shortcuts respect selection and do not launch behind confirmations", () => {
+  ctx.cursorActive = true
+  ctx.selectedIndex = 2
+  ctx.selectedLogs(false)
+  assert.equal(launched.at(-1).at(-1), "c".repeat(64))
+  ctx.requestAction("start", ctx.containers[2])
+  const count = launched.length
+  ctx.openLogs(ctx.containers[0], true)
+  assert.equal(launched.length, count)
+  ctx.cancelAction()
 })
 console.log(`\n${passes} controller tests passed`)

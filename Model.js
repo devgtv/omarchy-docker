@@ -10,7 +10,7 @@
 // Only the first five separators are structural. Metadata is JSON encoded,
 // preserving pipes, newlines and Unicode in labels, paths and error messages.
 // Project only the fields we display: never emit environment or health logs.
-var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}}}'
+var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"exposedPorts":{{json .Config.ExposedPorts}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}}}'
 var snapshotScript = [
   "kind=context",
   "target=${DOCKER_CONTEXT:-}",
@@ -148,10 +148,23 @@ function metadata(text) {
   var data = {}
   try { data = JSON.parse(text) || {} } catch (error) { /* older snapshots */ }
   function string(value) { return typeof value === "string" ? value : "" }
+  function object(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {} }
+  function mergedPorts(ports, exposedPorts) {
+    var result = {}
+    ports = object(ports)
+    exposedPorts = object(exposedPorts)
+    Object.keys(ports).forEach(function(port) { result[port] = ports[port] })
+    // Some Docker targets report only Config.ExposedPorts when no host port is
+    // published yet; keep those as explicit "not published" entries.
+    Object.keys(exposedPorts).forEach(function(port) {
+      if (!Object.prototype.hasOwnProperty.call(result, port)) result[port] = null
+    })
+    return result
+  }
   return {
     health: ["healthy", "unhealthy", "starting"].indexOf(data.health) >= 0 ? data.health : "",
     project: string(data.project), service: string(data.service),
-    ports: data.ports && typeof data.ports === "object" && !Array.isArray(data.ports) ? data.ports : {},
+    ports: mergedPorts(data.ports, data.exposedPorts),
     mounts: Array.isArray(data.mounts) ? data.mounts.filter(function(m) { return m && typeof m === "object" }) : [],
     startedAt: string(data.startedAt), finishedAt: string(data.finishedAt),
     exitCode: typeof data.exitCode === "number" && isFinite(data.exitCode) ? data.exitCode : null,

@@ -79,6 +79,16 @@ function containerActionCommand(target, action, container) {
   return dockerCommand(target, [action, "--", container.fullId])
 }
 
+function logsCommand(target, container, follow) {
+  if (!validContainer(container) || !validTarget(target)) return []
+  var args = ["logs", "--tail", "200", "--timestamps"]
+  if (follow === true) args.push("--follow")
+  args.push("--", container.fullId)
+  // The terminal receives an argument array, not shell-interpolated names.
+  // --hold keeps completed logs/errors readable where supported by the terminal.
+  return ["xdg-terminal-exec", "--hold", "--title=Docker logs: " + String(container.name || container.fullId.substring(0, 12)) + " · " + targetLabel(target), "--"].concat(dockerCommand(target, args))
+}
+
 function parseSizeToBytes(text) {
   var m = /^(\d+(?:\.\d+)?)\s*([KMGT]?i?B)$/i.exec(String(text || "").trim())
   if (!m) return 0
@@ -211,6 +221,7 @@ if (typeof module !== "undefined") {
     validContainer: validContainer,
     canContainerAction: canContainerAction,
     containerActionCommand: containerActionCommand,
+    logsCommand: logsCommand,
     parseSizeToBytes: parseSizeToBytes,
     formatBytes: formatBytes,
     formatMb: formatMb,

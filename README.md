@@ -13,10 +13,11 @@
 - The popup auto-refreshes every 3 seconds.
 - The popup identifies the selected Docker context and whether it uses a local socket or a network endpoint. `DOCKER_CONTEXT` takes precedence over `DOCKER_HOST`, matching Docker CLI behavior.
 - Snapshots and RAM updates explicitly select their captured target, so switching the default context does not redirect an already queued update. Host URLs are not displayed, to avoid exposing embedded credentials.
+- Open the last 200 timestamped log lines in your default terminal, or follow live output. Multiple log terminals can be open independently without blocking the panel.
 
 ## Installation
 
-Requires Omarchy Quattro (Quickshell), Bash, the Docker CLI and access to a running Docker daemon. Install and enable it with:
+Requires Omarchy Quattro (Quickshell), Bash, the Docker CLI and access to a running Docker daemon. Log viewing additionally requires `xdg-terminal-exec` and a configured default terminal (provided by a standard Omarchy installation). Install and enable it with:
 
 ```bash
 omarchy plugin install https://github.com/devgtv/omarchy-docker
@@ -43,11 +44,14 @@ omarchy plugin remove devgtv.docker
   - `r` force refresh
   - `s` request start/stop for the selected container
   - `Shift+r` request restart for the selected running container
+  - `g` open recent logs for the selected container
+  - `Shift+g` follow logs for the selected container
   - `Esc` close
 - The slider range goes from 6 MiB up to the Docker daemon's total RAM, including remote contexts. Keyboard and wheel adjustments use 128 MiB steps. If RAM cannot be detected, only the 6 MiB minimum is available.
 - Failed RAM updates show the Docker error in the popup. Rapid edits are queued per container, even if you change selection before the keyboard debounce finishes.
 - Start is available for created/exited containers; stop and restart are available for running containers. Other states remain read-only. Every lifecycle action asks for confirmation, showing the container and Docker target. Cancel is selected by default; use arrows or Tab to select Confirm, then Enter. Escape cancels. Closing the panel also cancels an unconfirmed action.
 - Lifecycle actions and RAM updates do not run concurrently. Commands use full container IDs, so replacing a container with another of the same name does not redirect an already captured action. Successful operations refresh the list; failures appear in the popup. Starting runs the container workload, and stopping/restarting may interrupt services.
+- Logs are available for stopped containers too, subject to the Docker logging driver. The selected Docker target and full container ID are passed directly as arguments; no container name is interpolated into a shell command. Follow mode uses `docker logs --follow`; press Ctrl+C to stop following. The launcher requests that the terminal stay open after completion (`--hold`, if supported). Docker/logging-driver errors are displayed in that terminal; terminal-launch failures are logged by Quickshell. Logs may contain secrets: inspect them before sharing.
 - Changing a limit also sets `--memory-swap -1` (unlimited swap, not disabled swap). Lowering memory can cause a container's workload to be killed by the kernel's out-of-memory handler. Changes affect the selected Docker context, which may be remote.
 
 ## Configuration

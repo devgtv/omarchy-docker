@@ -9,6 +9,7 @@ const functions = [...source.matchAll(/^  function (\w+)\(([^\n]*)\) \{([\s\S]*?
   .map(match => `function ${match[1]}(${match[2]}) {${match[3]}\n}`)
 const ctx = vm.createContext({
   Model: require("../Model.js"),
+  dockerTarget: {kind: "context", value: "test", endpoint: "unix:///test.sock"},
   pendingSets: [], activeSet: null, keyboardEdits: {}, memOverrides: {},
   containers: [{name: "web", memLimitBytes: 512 * 1048576}, {name: "db", memLimitBytes: 1024 * 1048576}],
   selectedIndex: 0, hostMemMb: 8192, memMin: 6, memStep: 128,
@@ -32,8 +33,9 @@ function finish(code = 0, status = 0, message = "") {
 test("controller retains the in-flight job identity explicitly", () => {
   ctx.setMemory("web", 640)
   assert.equal(ctx.activeSet.name, "web")
-  assert.equal(ctx.setProc.command[5], "-1")
-  assert.equal(ctx.setProc.command[6], "web")
+  assert.equal(ctx.setProc.command.at(-2), "-1")
+  assert.equal(ctx.setProc.command.at(-1), "web")
+  assert.equal(ctx.setProc.command[7], "test")
 })
 test("repeated queued updates coalesce to the latest limit", () => {
   ctx.setMemory("web", 768)

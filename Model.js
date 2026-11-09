@@ -27,13 +27,19 @@ var snapshotScript = [
   "mem=$(docker_cmd info --format '{{.MemTotal}}' 2>/dev/null)",
   "echo \"${mem:-0}\"",
   "echo '==CONTAINERS=='",
-  "ids=$(docker_cmd ps -q 2>/dev/null)",
+  "ids=$(docker_cmd ps -aq 2>/dev/null)",
+  "rows=",
   "if [ -n \"$ids\" ]; then",
-  "  docker_cmd inspect --format '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}' $ids 2>/dev/null",
+  "  rows=$(docker_cmd inspect --format '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}' $ids 2>/dev/null)",
+  "  printf '%s\\n' \"$rows\"",
   "fi",
   "echo '==STATS=='",
-  "if [ -n \"$ids\" ]; then",
-  "  docker_cmd stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' $ids 2>/dev/null",
+  "running_ids=",
+  "while IFS='|' read -r id name image status memory; do",
+  "  if [ \"$status\" = running ]; then running_ids=\"$running_ids $id\"; fi",
+  "done <<< \"$rows\"",
+  "if [ -n \"$running_ids\" ]; then",
+  "  docker_cmd stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' $running_ids 2>/dev/null",
   "fi"
 ].join("\n")
 
@@ -56,6 +62,21 @@ function targetLabel(target) {
   var location = /^(unix|npipe):/.test(endpoint) ? "local socket" : "remote / network"
   // Do not expose credentials embedded in a DOCKER_HOST URL.
   return (target.kind === "context" ? "Context: " + target.value : "DOCKER_HOST override") + " · " + location
+}
+
+function validContainer(container) {
+  return !!container && /^[a-f0-9]{64}$/.test(String(container.fullId || ""))
+}
+
+function canContainerAction(action, container) {
+  if (!validContainer(container)) return false
+  if (action === "start") return container.status === "created" || container.status === "exited"
+  return (action === "stop" || action === "restart") && container.status === "running"
+}
+
+function containerActionCommand(target, action, container) {
+  if (!canContainerAction(action, container)) return []
+  return dockerCommand(target, [action, "--", container.fullId])
 }
 
 function parseSizeToBytes(text) {
@@ -167,6 +188,7 @@ function parseSnapshot(text) {
     var stats = statsByName[name] || null
     result.containers.push({
       id: String(cp[0] || "").trim().substring(0, 12),
+      fullId: String(cp[0] || "").trim(),
       name: name,
       image: String(cp[2] || "").trim(),
       status: String(cp[3] || "").trim(),
@@ -186,6 +208,9 @@ if (typeof module !== "undefined") {
     validTarget: validTarget,
     dockerCommand: dockerCommand,
     targetLabel: targetLabel,
+    validContainer: validContainer,
+    canContainerAction: canContainerAction,
+    containerActionCommand: containerActionCommand,
     parseSizeToBytes: parseSizeToBytes,
     formatBytes: formatBytes,
     formatMb: formatMb,

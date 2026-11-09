@@ -10,14 +10,19 @@ const functions = [...source.matchAll(/^  function (\w+)\(([^\n]*)\) \{([\s\S]*?
 const ctx = vm.createContext({
   Model: require("../Model.js"),
   dockerTarget: {kind: "context", value: "test", endpoint: "unix:///test.sock"},
+  dockerAvailable: true, pendingAction: null, activeAction: null, actionProc: {running: false},
+  actionNotice: "", mutationRevision: 0,
   pendingSets: [], activeSet: null, keyboardEdits: {}, memOverrides: {},
-  containers: [{name: "web", memLimitBytes: 512 * 1048576}, {name: "db", memLimitBytes: 1024 * 1048576}],
+  containers: [{name: "web", status: "running", fullId: "a".repeat(64), memLimitBytes: 512 * 1048576}, {name: "db", status: "running", fullId: "b".repeat(64), memLimitBytes: 1024 * 1048576}],
   selectedIndex: 0, hostMemMb: 8192, memMin: 6, memStep: 128,
   userInteracting: false, actionError: "", setProc: {running: false},
   refreshProc: {running: false},
   memDebounce: {running: false, restart() { this.running = true }}
 })
 ctx.root = ctx
+Object.defineProperty(ctx, "controlsBusy", {get() {
+  return ctx.userInteracting || ctx.memDebounce.running || ctx.setProc.running || ctx.pendingSets.length > 0 || ctx.actionProc.running || ctx.pendingAction !== null
+}})
 vm.runInContext(functions.join("\n"), ctx)
 let passes = 0
 function test(name, body) {
@@ -34,7 +39,7 @@ test("controller retains the in-flight job identity explicitly", () => {
   ctx.setMemory("web", 640)
   assert.equal(ctx.activeSet.name, "web")
   assert.equal(ctx.setProc.command.at(-2), "-1")
-  assert.equal(ctx.setProc.command.at(-1), "web")
+  assert.equal(ctx.setProc.command.at(-1), "a".repeat(64))
   assert.equal(ctx.setProc.command[7], "test")
 })
 test("repeated queued updates coalesce to the latest limit", () => {
@@ -116,5 +121,55 @@ test("refresh waits for interaction and pending keyboard edits", () => {
   ctx.memDebounce.running = false
   ctx.refresh()
   assert.equal(ctx.refreshProc.running, true)
+})
+test("requesting lifecycle actions never executes before confirmation", () => {
+  ctx.requestAction("stop", ctx.containers[0])
+  assert.equal(ctx.pendingAction.action, "stop")
+  assert.equal(ctx.actionProc.running, false)
+  ctx.cancelAction()
+  ctx.confirmAction()
+  assert.equal(ctx.actionProc.running, false)
+})
+test("confirmation pins the original full ID and target despite selection changes", () => {
+  ctx.requestAction("restart", ctx.containers[0])
+  ctx.selectedIndex = 1
+  const oldTarget = ctx.dockerTarget
+  ctx.dockerTarget = {kind: "context", value: "other"}
+  ctx.confirmAction()
+  assert.equal(ctx.actionProc.command[7], "test")
+  assert.deepEqual(Array.from(ctx.actionProc.command.slice(-3)), ["restart", "--", "a".repeat(64)])
+  ctx.dockerTarget = oldTarget
+})
+test("lifecycle writes exclude memory edits and other lifecycle requests", () => {
+  ctx.setMemory("db", 2048)
+  ctx.requestAction("stop", ctx.containers[1])
+  assert.equal(ctx.pendingSets.length, 0)
+  assert.equal(ctx.setProc.running, false)
+  assert.equal(ctx.pendingAction, null)
+  ctx.actionProc.running = false
+  ctx.finishAction(1, 0, "access denied")
+  assert.equal(ctx.actionError, "Could not restart web: access denied")
+})
+test("successful lifecycle completion reports success and refreshes", () => {
+  ctx.requestAction("stop", ctx.containers[1])
+  ctx.confirmAction()
+  ctx.refreshProc.running = false
+  ctx.actionProc.running = false
+  ctx.finishAction(0, 0, "")
+  assert.equal(ctx.actionNotice, "Completed stop for db")
+  assert.equal(ctx.refreshProc.running, true)
+})
+test("stopped container memory is not modified by keyboard or direct calls", () => {
+  ctx.containers.push({name: "stopped", status: "exited", fullId: "c".repeat(64)})
+  ctx.selectedIndex = 2
+  ctx.adjustSelectedMem(1)
+  ctx.setMemory("stopped", 512)
+  assert.equal(ctx.setProc.running, false)
+  assert.equal(ctx.keyboardEdits.stopped, undefined)
+})
+test("snapshots record the current mutation revision", () => {
+  ctx.refreshProc.running = false
+  ctx.refresh()
+  assert.equal(ctx.refreshProc.revision, ctx.mutationRevision)
 })
 console.log(`\n${passes} controller tests passed`)

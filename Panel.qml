@@ -3,6 +3,7 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Ui
+import qs.Ui as Ui
 import qs.Commons
 import "Model.js" as Model
 
@@ -34,6 +35,11 @@ Panel {
   property var activeSet: null
   property var keyboardEdits: ({})
   property string actionError: ""
+  property string actionNotice: ""
+  property var pendingAction: null
+  property var activeAction: null
+  property int mutationRevision: 0
+  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || pendingSets.length > 0 || actionProc.running || pendingAction !== null
 
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
@@ -81,13 +87,18 @@ Panel {
   }
 
   function refresh() {
-    if (userInteracting || memDebounce.running || setProc.running || pendingSets.length > 0) return
-    if (!refreshProc.running) refreshProc.running = true
+    if (controlsBusy) return
+    if (!refreshProc.running) {
+      refreshProc.revision = mutationRevision
+      refreshProc.running = true
+    }
   }
 
   // --memory-swap -1 allows unlimited swap; it does not disable swapping.
   function setMemory(name, mb) {
-    if (!name || !Model.validTarget(dockerTarget)) return
+    if (!name || !Model.validTarget(dockerTarget) || actionProc.running || pendingAction !== null) return
+    var container = containers.filter(function(c) { return c.name === name })[0]
+    if (!Model.validContainer(container) || container.status !== "running") return
     actionError = ""
     // A direct slider release supersedes an older debounced keyboard edit.
     var edits = {}
@@ -105,7 +116,7 @@ Panel {
         return
       }
     }
-    queue.push({ name: name, mb: clamped, target: dockerTarget })
+    queue.push({ name: name, id: container.fullId, mb: clamped, target: dockerTarget })
     pendingSets = queue
     startNextSet()
   }
@@ -115,7 +126,8 @@ Panel {
     var job = pendingSets[0]
     pendingSets = pendingSets.slice(1)
     activeSet = job
-    setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.name])
+    mutationRevision += 1
+    setProc.command = Model.dockerCommand(job.target, ["update", "--memory", String(job.mb) + "m", "--memory-swap", "-1", job.id])
     setProc.running = true
   }
 
@@ -149,9 +161,10 @@ Panel {
   }
 
   function adjustSelectedMem(deltaSteps) {
+    if (actionProc.running || pendingAction !== null) return
     if (selectedIndex < 0 || selectedIndex >= containers.length) return
     var c = containers[selectedIndex]
-    if (!c) return
+    if (!c || c.status !== "running") return
     var next = Model.clampMemMb(effectiveMb(c) + deltaSteps * memStep, hostMemMb)
     setOverride(c.name, next)
     var edits = Object.assign({}, keyboardEdits)
@@ -167,6 +180,47 @@ Panel {
       if (containers.some(function(c) { return c.name === name })) setMemory(name, edits[name])
       else clearOverride(name)
     }
+  }
+
+  function requestAction(action, container) {
+    if (controlsBusy || !dockerAvailable || !Model.validTarget(dockerTarget)) return
+    if (!Model.canContainerAction(action, container)) return
+    actionError = ""
+    actionNotice = ""
+    // Store the identity and target, not the mutable cursor or container name.
+    pendingAction = { action: action, container: { fullId: container.fullId, status: container.status }, name: container.name, target: dockerTarget }
+  }
+
+  function cancelAction() {
+    pendingAction = null
+  }
+
+  function confirmAction() {
+    var job = pendingAction
+    if (!job || actionProc.running) return
+    var command = Model.containerActionCommand(job.target, job.action, job.container)
+    pendingAction = null
+    if (command.length === 0) return
+    activeAction = job
+    mutationRevision += 1
+    actionProc.command = command
+    actionProc.running = true
+  }
+
+  function finishAction(exitCode, exitStatus, errorText) {
+    var job = activeAction
+    activeAction = null
+    if (!job) return
+    if (exitCode !== 0 || exitStatus !== 0)
+      actionError = "Could not " + job.action + " " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
+    else actionNotice = "Completed " + job.action + " for " + job.name
+    refresh()
+  }
+
+  function selectedAction(action) {
+    if (!cursorActive || selectedIndex < 0 || selectedIndex >= containers.length) return
+    var c = containers[selectedIndex]
+    requestAction(action === "toggle" ? (c.status === "running" ? "stop" : "start") : action, c)
   }
 
   function ensureCursorVisible(item) {
@@ -190,6 +244,7 @@ Panel {
   Component.onCompleted: refresh()
 
   onOpenedChanged: {
+    if (!opened) cancelAction()
     if (opened) {
       refresh()
       selectedIndex = 0
@@ -208,13 +263,14 @@ Panel {
 
   Process {
     id: refreshProc
+    property int revision: 0
     command: ["bash", "-c", Model.snapshotScript]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         // A request already in flight must not recreate a dragged slider or
         // replace the model underneath a keyboard preview.
-        if (root.userInteracting || memDebounce.running || setProc.running || root.pendingSets.length > 0) return
+        if (root.controlsBusy || refreshProc.revision !== root.mutationRevision) return
         var snap = Model.parseSnapshot(String(text || ""))
         root.dockerAvailable = snap.dockerAvailable
         root.dockerVersion = snap.dockerVersion
@@ -225,6 +281,14 @@ Panel {
         root.pruneOverrides(snap.containers.map(function(c) { return c.name }))
       }
     }
+    onExited: if (revision !== root.mutationRevision) Qt.callLater(root.refresh)
+  }
+
+  Process {
+    id: actionProc
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { id: actionErrors; waitForEnd: true }
+    onExited: function(exitCode, exitStatus) { root.finishAction(exitCode, exitStatus, actionErrors.text) }
   }
 
   Process {
@@ -258,11 +322,12 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
+    contentHeight: panel.fittedContentHeight(Math.max(panelColumn.implicitHeight, root.pendingAction ? Style.space(360) : 0), Style.space(560))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: root.pendingAction !== null
       onMoveRequested: function(dx, dy) {
         if (!root.cursorActive) { root.cursorActive = true; return }
         if (dy !== 0) root.moveCursor(dy)
@@ -271,7 +336,11 @@ Panel {
       onActivateRequested: if (root.cursorActive) root.refresh()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(t) { if (t === "r") root.refresh() }
+      onTextKey: function(t) {
+        if (t === "r") root.refresh()
+        else if (t === "s") root.selectedAction("toggle")
+        else if (t === "R") root.selectedAction("restart")
+      }
 
       ScrollView {
         id: scrollArea
@@ -327,8 +396,9 @@ Panel {
                 text: {
                   if (!root.dockerAvailable) return "DAEMON UNAVAILABLE"
                   var n = root.containers.length
-                  if (n === 0) return "NO RUNNING CONTAINERS"
-                  return (n + (n === 1 ? " RUNNING CONTAINER" : " RUNNING CONTAINERS")).toUpperCase()
+                  if (n === 0) return "NO CONTAINERS"
+                  var running = root.containers.filter(function(c) { return c.status === "running" }).length
+                  return running + " RUNNING · " + n + " TOTAL"
                 }
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
@@ -361,7 +431,7 @@ Panel {
             visible: !root.dockerAvailable
             width: parent.width
             wrapMode: Text.WordWrap
-            text: "Could not reach the Docker daemon. Make sure it is running and that your user is in the docker group."
+            text: "Could not reach the selected Docker daemon. Check the context, connection and your user's access (including rootless Docker)."
             color: Qt.darker(root.bar.foreground, 1.4)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
@@ -376,6 +446,17 @@ Panel {
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
+          }
+
+          Text {
+            visible: root.actionNotice !== "" || actionProc.running
+            width: parent.width
+            wrapMode: Text.WrapAnywhere
+            textFormat: Text.PlainText
+            text: actionProc.running && root.activeAction ? "Applying " + root.activeAction.action + " to " + root.activeAction.name + "…" : root.actionNotice
+            color: root.bar.foreground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
           }
 
           // ---------- Containers ----------
@@ -422,6 +503,7 @@ Panel {
 
                   Text {
                     id: nameText
+                    textFormat: Text.PlainText
                     text: containerRow.container.name
                     color: root.bar.foreground
                     font.family: root.bar.fontFamily
@@ -454,7 +536,8 @@ Panel {
 
                 // Row 2: image
                 Text {
-                  text: containerRow.container.image + " · " + containerRow.container.id
+                  text: containerRow.container.status + " · " + containerRow.container.image + " · " + containerRow.container.id
+                  textFormat: Text.PlainText
                   color: Qt.darker(root.bar.foreground, 1.6)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
@@ -462,8 +545,28 @@ Panel {
                   width: parent.width
                 }
 
+                Flow {
+                  width: parent.width
+                  spacing: Style.space(6)
+                  Repeater {
+                    model: ["start", "stop", "restart"]
+                    delegate: Ui.Button {
+                      required property string modelData
+                      visible: Model.canContainerAction(modelData, containerRow.container)
+                      text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
+                      foreground: root.bar.foreground
+                      fontFamily: root.bar.fontFamily
+                      fontSize: Style.font.caption
+                      bordered: true
+                      enabled: !root.controlsBusy && root.dockerAvailable && Model.validTarget(root.dockerTarget)
+                      onClicked: root.requestAction(modelData, containerRow.container)
+                    }
+                  }
+                }
+
                 // Row 3: RAM limit header
                 Item {
+                  visible: containerRow.container.status === "running"
                   width: parent.width
                   implicitHeight: ramValue.implicitHeight
 
@@ -499,9 +602,10 @@ Panel {
                 }
 
                 // Row 4: RAM slider
-                  PanelSlider {
+                PanelSlider {
                   id: ramSlider
-                  enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget)
+                  visible: containerRow.container.status === "running"
+                  enabled: root.dockerAvailable && Model.validTarget(root.dockerTarget) && !actionProc.running && root.pendingAction === null
                   bar: root.bar
                   width: parent.width
                   minimum: root.memMin
@@ -540,7 +644,8 @@ Panel {
           Text {
             visible: root.containers.length > 0
             width: parent.width
-            text: "j/k navigate · h/l adjust RAM · r refresh"
+            text: "j/k navigate · h/l RAM · s start/stop · Shift+r restart · r refresh"
+            wrapMode: Text.WordWrap
             color: Qt.darker(root.bar.foreground, 1.6)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -551,6 +656,33 @@ Panel {
             width: parent.width
             height: Style.space(4)
           }
+        }
+      }
+
+      Item {
+        id: confirmationKeys
+        anchors.fill: parent
+        visible: root.pendingAction !== null
+        z: 20
+        onVisibleChanged: {
+          if (visible) { actionConfirm.selectedIndex = 0; forceActiveFocus() }
+          else keyCatcher.forceActiveFocus()
+        }
+        Keys.onPressed: function(event) {
+          actionConfirm.handleKey(event)
+          event.accepted = true
+        }
+        ConfirmDialog {
+          id: actionConfirm
+          anchors.fill: parent
+          opened: root.pendingAction !== null
+          message: root.pendingAction ? "Confirm " + root.pendingAction.action + " for " + root.pendingAction.name + "?\n" + Model.targetLabel(root.pendingAction.target) + "\nStarting may execute the container workload; stopping or restarting may interrupt services." : ""
+          confirmText: "Confirm"
+          background: root.bar.background
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          onCanceled: root.cancelAction()
+          onConfirmed: root.confirmAction()
         }
       }
     }

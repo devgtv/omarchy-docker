@@ -18,11 +18,13 @@ ln -s "$SHELL_ROOT/Ui" "$TEMP/Ui"
 ln -s "$SHELL_ROOT/Commons" "$TEMP/Commons"
 cp "$ROOT/test/ui/docker.js" "$TEMP/bin/docker"
 cp "$ROOT/test/ui/terminal.js" "$TEMP/bin/xdg-terminal-exec"
-chmod +x "$TEMP/bin/docker" "$TEMP/bin/xdg-terminal-exec"
+cp "$ROOT/test/ui/clipboard.js" "$TEMP/bin/wl-copy"
+chmod +x "$TEMP/bin/docker" "$TEMP/bin/xdg-terminal-exec" "$TEMP/bin/wl-copy"
 export PATH="$TEMP/bin:$PATH"
 export DOCKER_PLUGIN_TEST_PATH="$ROOT"
 export DOCKER_PLUGIN_UI_STATE="$OUTPUT/state.json"
 export DOCKER_PLUGIN_UI_TERMINALS="$OUTPUT/terminals.jsonl"
+export DOCKER_PLUGIN_UI_CLIPBOARD="$OUTPUT/clipboard.txt"
 unset DOCKER_CONTEXT DOCKER_HOST
 timeout 45s quickshell --no-color -p "$TEMP/shell.qml" 2>&1 | tee "$OUTPUT/runtime.log"
 grep -q 'UI ASSERTIONS PASSED' "$OUTPUT/runtime.log"
@@ -31,6 +33,7 @@ node -e '
   const fs = require("node:fs")
   const assert = require("node:assert/strict")
   const calls = fs.readFileSync(process.argv[1] + ".calls", "utf8").trim().split("\n").map(JSON.parse)
+  assert.equal(fs.readFileSync(process.env.DOCKER_PLUGIN_UI_CLIPBOARD, "utf8"), "ui-running-web")
   const actions = calls.filter(c => ["start", "stop", "restart"].includes(c.action))
   assert.deepEqual(actions.map(c => c.action), ["stop", "start", "stop"])
   const terminals = fs.readFileSync(process.argv[2], "utf8").trim().split("\n").map(JSON.parse)

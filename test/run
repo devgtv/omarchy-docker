@@ -21,6 +21,7 @@ run() {
 }
 
 run "Model.js unit tests (node)" node "$TEST_DIR/model.test.js"
+run "Discovery and details regressions" node "$TEST_DIR/discovery.test.js"
 run "Panel controller regression tests (mocked Process/Timer)" node "$TEST_DIR/panel.test.js"
 run "Snapshot collection against fake Docker CLI" node "$TEST_DIR/snapshot.test.js"
 run "Manifest and shell contract" bash "$TEST_DIR/manifest.test.sh"

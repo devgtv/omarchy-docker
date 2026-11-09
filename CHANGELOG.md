@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.0 (unreleased)
+
+### Added
+
+- Case-insensitive, literal multi-term search across container name, image, ID, state, health and Compose project/service.
+- Combined state and Compose project filters, visible-result counts and a reset action.
+- Optional Compose grouping with a separate standalone section.
+- Healthcheck states and expandable details for image, full ID, Compose labels, uptime, ports, mounts and last exit diagnostics.
+- Copy the container name, full ID or port information using `wl-copy`.
+- `/` focuses search; `d` toggles details. Search input suppresses background shortcuts.
+
+### Changed
+
+- Collect JSON-encoded detail metadata in the existing inspect call, without collecting environment variables or healthcheck output.
+- Preserve keyboard selection by full container ID when filters, grouping or snapshots reorder rows.
+- Add discovery model, controller, UI and disposable real-Docker regression coverage.
+
 ## 1.1.0 (2026-11-09)
 
 ### Added

@@ -15,6 +15,11 @@ if (args[0] === "context" && args[1] === "show") { console.log("desktop"); proce
 if (args[0] === "context" && args[1] === "inspect") { console.log("ssh://server"); process.exit(0) }
 if (args[0] !== "--context" && args[0] !== "--host") process.exit(2)
 const command = args[2]
+if (process.env.MODE === "hang" && command === "ps") setInterval(() => {}, 1000)
+else if (process.env.MODE === "huge" && command === "inspect") process.stdout.write("x".repeat(1024 * 1024))
+else if (process.env.MODE === "row" && command === "inspect") console.log("a|" + "x".repeat(20000))
+else if (process.env.MODE === "count" && command === "ps") console.log(Array(129).fill("abc123").join("\\n"))
+else
 if (command === "version") console.log("29.0")
 else if (command === "info") console.log(args.some(arg => arg.includes(".NCPU")) ? "4" : "8589934592")
 else if (command === "ps") console.log(args.includes("-aq") ? "abc123\\nstopped456" : "abc123")
@@ -53,6 +58,21 @@ else process.exit(3)
     assert.equal(daemonCalls.find(call => call.args[2] === "stats").args.at(-1), "abc123")
     assert.equal(daemonCalls.find(call => call.args[2] === "inspect").args[4], Model.inspectFormat)
     console.log("ok - snapshot freezes " + kind + " target " + value)
+  }
+  const env = {...process.env, PATH: dir + path.delimiter + process.env.PATH,
+    CALL_LOG: path.join(dir, "calls.jsonl"), DOCKER_CONTEXT: "desktop", DOCKER_HOST: ""}
+  for (const mode of ["huge", "row", "count", "hang"]) {
+    const {spawnSync} = require("node:child_process")
+    const result = spawnSync("timeout", ["-k", "1s", "2s", "bash", "-c", Model.snapshotScript],
+      {encoding: "utf8", env: {...env, MODE: mode}, timeout: 5000, maxBuffer: 400000})
+    assert.notEqual(result.status, 0, mode + " must fail")
+    assert.doesNotMatch(result.stdout, /\n==COMPLETE==\s*$/)
+    assert.ok(Buffer.byteLength(result.stdout) < 310000, mode + " output stays bounded")
+    if (mode === "hang") assert.equal(result.status, 124)
+    const recovery = execFileSync("timeout", ["-k", "1s", "5s", "bash", "-c", Model.snapshotScript], {encoding: "utf8", env})
+    assert.match(recovery, /\n==COMPLETE==\s*$/)
+    assert.equal(Model.parseSnapshot(recovery).containers.length, 2)
+    console.log("ok - " + mode + " fails safely and the next snapshot succeeds")
   }
 } finally {
   fs.rmSync(dir, {recursive: true, force: true})

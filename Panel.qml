@@ -47,6 +47,7 @@ Panel {
   property var activeSet: null
   property var keyboardEdits: ({})
   property string actionError: ""
+  property string refreshError: ""
   property string actionNotice: ""
   property var pendingAction: null
   property var activeAction: null
@@ -382,13 +383,18 @@ Panel {
   Process {
     id: refreshProc
     property int revision: 0
-    command: ["bash", "-c", Model.snapshotScript]
+    command: ["timeout", "-k", "2s", "15s", "bash", "-c", Model.snapshotScript]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         // A request already in flight must not recreate a dragged slider or
         // replace the model underneath a keyboard preview.
         if (root.controlsBusy || refreshProc.revision !== root.mutationRevision) return
+        if (!/\n==COMPLETE==\s*$/.test(String(text || ""))) {
+          root.refreshError = "Docker refresh failed, timed out, or exceeded snapshot limits. Showing the previous result."
+          return
+        }
+        root.refreshError = ""
         var snap = Model.parseSnapshot(String(text || ""))
         root.dockerAvailable = snap.dockerAvailable
         root.dockerVersion = snap.dockerVersion
@@ -657,11 +663,11 @@ Panel {
           }
 
           Text {
-            visible: root.actionError !== ""
+            visible: root.actionError !== "" || root.refreshError !== ""
             width: parent.width
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
-            text: root.actionError
+            text: root.actionError || root.refreshError
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body

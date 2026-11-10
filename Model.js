@@ -12,12 +12,18 @@
 // Project only the fields we display: never emit environment or health logs.
 var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"exposedPorts":{{json .Config.ExposedPorts}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}},"nanoCpus":{{json .HostConfig.NanoCpus}}}'
 var snapshotScript = [
+  // Each command is capped before command substitution can retain its output.
+  // The outer timeout in Panel.qml bounds the entire process group.
+  "export LC_ALL=C",
+  "set -o pipefail",
+  "bounded() { local max=$1 data; shift; data=$(\"$@\" 2>/dev/null | head -c $((max + 1))) || return 1; [ ${#data} -le \"$max\" ] || return 1; printf '%s\\n' \"$data\"; }",
   "kind=context",
   "target=${DOCKER_CONTEXT:-}",
   "if [ -z \"$target\" ] && [ -n \"${DOCKER_HOST:-}\" ]; then kind=host; target=$DOCKER_HOST; fi",
-  "if [ -z \"$target\" ]; then target=$(docker context show 2>/dev/null); fi",
+  "if [ -z \"$target\" ]; then target=$(bounded 1024 docker context show) || exit 1; fi",
+  "[ ${#target} -le 1024 ] && [[ $target != *$'\\n'* && $target != *$'\\r'* ]] || exit 1",
   "endpoint=$target",
-  "if [ \"$kind\" = context ]; then endpoint=$(docker context inspect \"$target\" --format '{{.Endpoints.docker.Host}}' 2>/dev/null); fi",
+  "if [ \"$kind\" = context ]; then endpoint=$(bounded 1024 docker context inspect \"$target\" --format '{{.Endpoints.docker.Host}}') || exit 1; fi",
   "echo '==TARGET=='",
   "printf '%s\\n' \"$kind\" \"$target\" \"$endpoint\"",
   // Freeze the selected target for every command in this snapshot. Clearing
@@ -25,18 +31,31 @@ var snapshotScript = [
   // `docker context use` changes; TLS/auth configuration is otherwise preserved.
   "docker_cmd() { [ -n \"$target\" ] && env -u DOCKER_CONTEXT -u DOCKER_HOST docker --\"$kind\" \"$target\" \"$@\"; }",
   "echo '==DOCKER=='",
-  "docker_cmd version --format '{{.Server.Version}}' 2>/dev/null || echo unavailable",
+  "version=$(bounded 1024 docker_cmd version --format '{{.Server.Version}}') || exit 1",
+  "printf '%s\\n' \"$version\"",
   "echo '==HOST=='",
-  "mem=$(docker_cmd info --format '{{.MemTotal}}' 2>/dev/null)",
+  "mem=$(bounded 128 docker_cmd info --format '{{.MemTotal}}') || exit 1",
   "echo \"${mem:-0}\"",
   "echo '==HOSTCPU=='",
-  "cpu=$(docker_cmd info --format '{{.NCPU}}' 2>/dev/null)",
+  "cpu=$(bounded 128 docker_cmd info --format '{{.NCPU}}') || exit 1",
   "echo \"${cpu:-0}\"",
   "echo '==CONTAINERS=='",
-  "ids=$(docker_cmd ps -aq 2>/dev/null)",
+  "ids=$(bounded 8320 docker_cmd ps -aq) || exit 1",
+  "count=0",
+  "while IFS= read -r id; do",
+  "  [ -z \"$id\" ] && continue",
+  "  [[ $id =~ ^[a-zA-Z0-9]{1,64}$ ]] || exit 1",
+  "  count=$((count + 1)); [ \"$count\" -le 128 ] || exit 1",
+  "done <<< \"$ids\"",
   "rows=",
   "if [ -n \"$ids\" ]; then",
-  "  rows=$(docker_cmd inspect --format '" + inspectFormat + "' $ids 2>/dev/null)",
+  "  rows=$(bounded 262144 docker_cmd inspect --format '" + inspectFormat + "' $ids) || exit 1",
+  "  row_count=0",
+  "  while IFS= read -r row; do",
+  "    row_count=$((row_count + 1)); [ \"$row_count\" -le 128 ] && [ ${#row} -le 16384 ] || exit 1",
+  "    IFS='|' read -r rid name image status memory rest <<< \"$row\"",
+  "    [[ $rid =~ ^[a-zA-Z0-9]{1,64}$ ]] && [ ${#name} -le 4096 ] && [ ${#image} -le 4096 ] && [ ${#status} -le 128 ] || exit 1",
+  "  done <<< \"$rows\"",
   "  printf '%s\\n' \"$rows\"",
   "fi",
   "echo '==STATS=='",
@@ -45,8 +64,9 @@ var snapshotScript = [
   "  if [ \"$status\" = running ]; then running_ids=\"$running_ids $id\"; fi",
   "done <<< \"$rows\"",
   "if [ -n \"$running_ids\" ]; then",
-  "  docker_cmd stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' $running_ids 2>/dev/null",
-  "fi"
+  "  bounded 32768 docker_cmd stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}' $running_ids || exit 1",
+  "fi",
+  "echo '==COMPLETE=='"
 ].join("\n")
 
 function validTarget(target) {

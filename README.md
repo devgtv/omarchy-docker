@@ -21,7 +21,7 @@
 
 ## Installation
 
-Requires Omarchy Quattro (Quickshell), Bash, the Docker CLI and access to a running Docker daemon. Log viewing additionally requires `xdg-terminal-exec` and a configured default terminal (provided by a standard Omarchy installation). Install and enable it with:
+Requires Omarchy Quattro (Quickshell), Bash, GNU coreutils (`timeout` and `head`), the Docker CLI and access to a running Docker daemon. Log viewing additionally requires `xdg-terminal-exec` and a configured default terminal (provided by a standard Omarchy installation). Install and enable it with:
 
 ```bash
 omarchy plugin install https://github.com/devgtv/omarchy-docker
@@ -81,6 +81,7 @@ Default is 3000 ms.
 ## Implementation details
 
 - Data is collected by a Quickshell `Process` running `docker ps`, `docker inspect` and `docker stats`.
+- A snapshot has a 15-second total deadline and accepts at most 128 containers, 256 KiB of inspect output (16 KiB per row), and 32 KiB of stats. Other command outputs are also bounded. If a deadline or limit is exceeded, the previous snapshot remains visible with an error; the next refresh retries. These limits bound data retained by the plugin, not memory used internally by the Docker CLI when decoding daemon responses.
 - A RAM limit change first applies `--memory <MB>m --memory-swap <2×MB>m`, then lifts the temporary swap bound with `--memory-swap -1`. Applying a finite valid pair first avoids runtime errors observed when increasing RAM directly to unlimited swap. If the second step fails, the RAM change and temporary combined memory+swap limit remain applied; the popup explicitly reports that partial change. CPU limits use Docker's `--cpus` setting. The Unlimited preset sets the value to the daemon's full logical CPU count because `--cpus 0` is ignored by Docker updates when a previous limit exists.
 - The user needs access to the selected Docker daemon (for example via the `docker` group or rootless Docker). Membership in the `docker` group effectively grants root-level access; this plugin does not elevate privileges.
 

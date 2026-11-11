@@ -13,7 +13,7 @@
 var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"exposedPorts":{{json .Config.ExposedPorts}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}},"nanoCpus":{{json .HostConfig.NanoCpus}}}'
 var snapshotScript = [
   // Each command is capped before command substitution can retain its output.
-  // The outer timeout in Panel.qml bounds the entire process group.
+  // The outer command bounds time and memory for the entire process group.
   "export LC_ALL=C",
   "set -o pipefail",
   "bounded() { local max=$1 data; shift; data=$(\"$@\" 2>/dev/null | head -c $((max + 1))) || return 1; [ ${#data} -le \"$max\" ] || return 1; printf '%s\\n' \"$data\"; }",
@@ -68,6 +68,20 @@ var snapshotScript = [
   "fi",
   "echo '==COMPLETE=='"
 ].join("\n")
+
+// Run the complete collector tree in a transient user cgroup. MemorySwapMax=0
+// makes MemoryMax an allocation boundary rather than allowing anonymous pages
+// to spill into swap, while OOMPolicy=kill prevents a killed Docker CLI from
+// leaving the rest of a partial snapshot alive.
+var SNAPSHOT_MEMORY_MAX_BYTES = 268435456
+var snapshotCommand = [
+  "systemd-run", "--user", "--scope", "--quiet", "--collect", "--expand-environment=no",
+  "--property=MemoryAccounting=yes",
+  "--property=MemoryMax=" + SNAPSHOT_MEMORY_MAX_BYTES,
+  "--property=MemorySwapMax=0",
+  "--property=OOMPolicy=kill",
+  "timeout", "-k", "2s", "15s", "bash", "-c", snapshotScript
+]
 
 function validTarget(target) {
   return !!target && (target.kind === "context" || target.kind === "host")
@@ -357,6 +371,8 @@ function parseSnapshot(text) {
 if (typeof module !== "undefined") {
   module.exports = {
     snapshotScript: snapshotScript,
+    snapshotCommand: snapshotCommand,
+    SNAPSHOT_MEMORY_MAX_BYTES: SNAPSHOT_MEMORY_MAX_BYTES,
     inspectFormat: inspectFormat,
     visibleContainers: visibleContainers,
     projects: projects,

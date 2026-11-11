@@ -8,6 +8,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Start the user service manager used by snapshot cgroups
+        run: |
+          uid=$(id -u)
+          sudo loginctl enable-linger "$USER"
+          sudo systemctl start "user@$uid.service"
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
       - name: Run regression tests
         run: bash test/run
       - name: Test real lifecycle and logs on disposable containers

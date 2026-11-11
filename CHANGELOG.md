@@ -5,6 +5,7 @@
 ### Fixed
 
 - Bound snapshot output, container counts and collection time; retain the last snapshot and report failures. Thanks to @HANCORE-linux for reporting the unbounded remote snapshot issue.
+- Bound the complete snapshot process tree, including Docker CLI response decoding and formatting before stdout, with a 256 MiB no-swap user cgroup and group-wide OOM termination.
 
 ## 1.3.0 (2026-11-09)
 

@@ -383,7 +383,7 @@ Panel {
   Process {
     id: refreshProc
     property int revision: 0
-    command: ["timeout", "-k", "2s", "15s", "bash", "-c", Model.snapshotScript]
+    command: Model.snapshotCommand
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

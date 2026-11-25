@@ -278,6 +278,15 @@ function registrations(entries, target) {
   })
 }
 
+function composeCommand(target, entry, services) {
+  if (!registrations([entry], target).length) return []
+  var args = ["compose", "--progress", "quiet", "--project-name", entry.name, "--file", entry.file]
+  if (services === null) return dockerCommand(target, args.concat(["config", "--services"]))
+  if (!Array.isArray(services) || !services.length || services.length > 128
+      || !services.every(function(s) { return /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(s) })) return []
+  return dockerCommand(target, args.concat(["up", "--detach", "--no-deps", "--"], services))
+}
+
 function selectionIndex(previous, next, index) {
   var id = previous[index] ? previous[index].fullId : ""
   for (var i = 0; i < next.length; i++) if (next[i].fullId === id) return i
@@ -419,6 +428,7 @@ if (typeof module !== "undefined") {
     existingProjectJob: existingProjectJob,
     observedServices: observedServices,
     registrations: registrations,
+    composeCommand: composeCommand,
     selectionIndex: selectionIndex,
     portsText: portsText,
     uptimeText: uptimeText,

@@ -67,8 +67,9 @@ Panel {
   property var pendingAction: null
   property var activeAction: null
   property var awaitingObservation: null
+  property var preparingUp: null
   property int mutationRevision: 0
-  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || cpuProc.running || activeCpuSet !== null || actionProc.running || activeAction !== null || pendingAction !== null
+  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || cpuProc.running || activeCpuSet !== null || actionProc.running || activeAction !== null || pendingAction !== null || configProc.running || preparingUp !== null
 
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
@@ -179,7 +180,7 @@ Panel {
 
   // --memory-swap -1 allows unlimited swap; it does not disable swapping.
   function setMemory(name, mb) {
-    if (!name || !Model.validTarget(dockerTarget) || cpuProc.running || activeCpuSet !== null || actionProc.running || pendingAction !== null) return
+    if (!name || !Model.validTarget(dockerTarget) || cpuProc.running || activeCpuSet !== null || actionProc.running || pendingAction !== null || root.preparingUp) return
     var container = containers.filter(function(c) { return c.name === name })[0]
     if (!Model.validContainer(container) || container.status !== "running") return
     actionError = ""
@@ -256,7 +257,7 @@ Panel {
   }
 
   function adjustSelectedMem(deltaSteps) {
-    if (actionProc.running || cpuProc.running || activeCpuSet !== null || pendingAction !== null) return
+    if (actionProc.running || cpuProc.running || activeCpuSet !== null || pendingAction !== null || root.preparingUp) return
     if (selectedIndex < 0 || selectedIndex >= visibleContainers.length) return
     var c = visibleContainers[selectedIndex]
     if (!c || c.status !== "running") return
@@ -297,6 +298,33 @@ Panel {
     actionError = ""
     actionNotice = ""
     pendingAction = job
+  }
+
+  function requestUp(name) {
+    if (!opened || controlsBusy || !dockerAvailable || refreshError) return
+    var entry = registrations.filter(e => e.name === name)[0]
+    var command = Model.composeCommand(dockerTarget, entry, null)
+    if (!command.length) return
+    actionError = ""
+    actionNotice = "Reading Compose services for " + name + "…"
+    preparingUp = {entry: entry, target: dockerTarget}
+    configProc.command = command
+    configProc.running = true
+  }
+
+  function finishConfig(code, status, output, errors) {
+    var prep = preparingUp
+    preparingUp = null
+    if (!prep || !opened) return
+    actionNotice = ""
+    var services = String(output || "").trim().split(/\r?\n/)
+    var command = Model.composeCommand(prep.target, prep.entry, services)
+    if (code !== 0 || status !== 0 || !command.length) {
+      actionError = "Cannot read Compose services: " + (String(errors || "").trim() || "invalid or empty service list")
+      return
+    }
+    pendingAction = {project: prep.entry.name, name: prep.entry.name, action: "create/update", target: prep.target,
+      command: command, services: services, scope: services.join(", ") + "\n" + prep.entry.file + "\nMay create or recreate containers."}
   }
 
   function confirmAction() {
@@ -392,7 +420,10 @@ Panel {
   Component.onCompleted: refresh()
 
   onOpenedChanged: {
-    if (!opened) cancelAction()
+    if (!opened) {
+      cancelAction()
+      if (preparingUp) { preparingUp = null; actionNotice = "" }
+    }
     if (opened) {
       refresh()
       selectedIndex = 0
@@ -452,8 +483,14 @@ Panel {
   }
 
   Process {
+    id: configProc
+    stdout: StdioCollector { id: serviceList; waitForEnd: true }
+    stderr: StdioCollector { id: configErrors; waitForEnd: true }
+    onExited: function(code, status) { root.finishConfig(code, status, serviceList.text, configErrors.text) }
+  }
+
+  Process {
     id: actionProc
-    stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { id: actionErrors; waitForEnd: true }
     onExited: function(exitCode, exitStatus) { root.finishAction(exitCode, exitStatus, actionErrors.text) }
   }
@@ -757,6 +794,13 @@ Panel {
                     enabled: !root.controlsBusy && !root.refreshError && root.dockerAvailable && projectCard.members.some(c => Model.canContainerAction(modelData, c))
                     onClicked: root.requestProject(modelData, projectCard.modelData)
                   }
+                }
+                Ui.Button {
+                  text: "Create / update"
+                  bordered: true
+                  visible: root.registrations.some(e => e.name === projectCard.modelData)
+                  enabled: root.dockerAvailable && !root.controlsBusy && !root.refreshError
+                  onClicked: root.requestUp(projectCard.modelData)
                 }
               }
             }

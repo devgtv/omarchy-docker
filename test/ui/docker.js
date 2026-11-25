@@ -24,6 +24,15 @@ if (action === "test-deny") { state.failWrites = true; save(); out("ok") }
 const c = state.containers.find(c => c.id === args.at(-1))
 if (action === "version") out("29.0-test")
 if (action === "info") out(args.some(arg => arg.includes(".NCPU")) ? "4" : "8589934592")
+if (action === "compose") {
+  const base = ["--progress", "quiet", "--project-name", "ui-empty", "--file", "/ui test/compose.yaml"]
+  if (!base.every((v, i) => args[i] === v)) fail("Unexpected project target")
+  if (args.slice(base.length).join(" ") === "config --services") out("api")
+  if (args.slice(base.length).join(" ") !== "up --detach --no-deps -- api") fail("Unexpected Compose arguments")
+  state.containers.push({id: "c".repeat(64), name: "ui-empty-api-1", status: "running", memory: 0, metadata: {project: "ui-empty", service: "api", health: "unhealthy"}})
+  save()
+  out("ok")
+}
 if (action === "ps") out(state.containers.filter(c => args.includes("-aq") || c.status === "running").map(c => c.id).join("\n"))
 if (action === "inspect") out(state.containers.map(c => `${c.id}|/${c.name}|busybox:test|${c.status}|${c.memory}|${JSON.stringify(c.metadata || {})}`).join("\n"))
 if (action === "stats") out(state.containers.filter(c => c.status === "running").map(c => `${c.name}|1.00%|8MiB / 8GiB|0.10%`).join("\n"))

@@ -229,6 +229,31 @@ ShellRoot {
         tryVerify(function() { return p.actionNotice.indexOf("Requested live logs") === 0 })
         wait(150)
 
+        p.settings = {refreshMs: 60000, composeProjects: [{context: "ui-disposable-test", name: "ui-empty", file: "/ui test/compose.yaml"}]}
+        p.groupByCompose = true
+        verify(findChild(keys, "dockerProject-ui-empty"))
+        p.requestUp("ui-empty")
+        tryVerify(function() { return p.pendingAction !== null })
+        compare(p.pendingAction.services.join(","), "api")
+        keyClick(Qt.Key_Right)
+        keyClick(Qt.Key_Return)
+        tryVerify(function() { return p.actionNotice.indexOf("api: 1/1 running · 1 unhealthy") >= 0 })
+        p.projectFilter = "ui-empty"
+        p.selectedIndex = 0
+        p.cursorActive = true
+        keyClick(Qt.Key_G)
+        tryVerify(function() { return p.actionNotice === "Requested logs for ui-empty-api-1" })
+        p.requestProject("restart", "ui-empty")
+        compare(p.pendingAction.command.slice(-2).join(" "), "-- " + "c".repeat(64))
+        keyClick(Qt.Key_Right)
+        keyClick(Qt.Key_Return)
+        tryVerify(function() { return p.actionNotice.indexOf("Observed after restart · ui-empty") === 0 })
+        p.projectFilter = ""
+        findChild(p, "dockerScrollArea").contentItem.contentY = 0
+        wait(100)
+        grabImage(card).save(Quickshell.env("DOCKER_PLUGIN_UI_OUTPUT") + "/stacks.png")
+        p.groupByCompose = false
+
         denyWrites.running = true
         tryVerify(function() { return !denyWrites.running })
         p.requestAction("stop", p.containers[0])

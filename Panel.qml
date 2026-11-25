@@ -22,11 +22,20 @@ Panel {
   property string searchQuery: ""
   property string statusFilter: "all"
   property string projectFilter: ""
-  property bool groupByCompose: false
+  property bool groupByCompose: true
+  property var expandedProjects: []
   property string expandedId: ""
   property var previousVisible: []
   readonly property var projectList: Model.projects(containers)
-  readonly property var visibleContainers: Model.visibleContainers(containers, searchQuery, statusFilter, projectFilter, groupByCompose)
+  readonly property var matches: Model.visibleContainers(containers, searchQuery, statusFilter, projectFilter, groupByCompose)
+  readonly property bool filtering: searchQuery.trim() !== "" || statusFilter !== "all" || projectFilter !== ""
+  readonly property var visibleContainers: matches.filter(function(c) {
+    return !groupByCompose || filtering || !c.project || expandedProjects.indexOf(c.project) >= 0
+  })
+
+  function toggleProject(name) {
+    expandedProjects = expandedProjects.indexOf(name) < 0 ? expandedProjects.concat([name]) : expandedProjects.filter(function(p) { return p !== name })
+  }
 
   // Keyboard cursor over the container list.
   property int selectedIndex: 0
@@ -400,7 +409,8 @@ Panel {
         root.dockerVersion = snap.dockerVersion
         if (JSON.stringify(root.dockerTarget) !== JSON.stringify(snap.target)) {
           root.memOverrides = ({})
-          root.expandedId = ""
+           root.expandedId = ""
+           root.expandedProjects = []
           root.previousVisible = []
           root.selectedIndex = 0
         }
@@ -475,6 +485,7 @@ Panel {
         else if (t === "g") root.selectedLogs(false)
         else if (t === "G") root.selectedLogs(true)
         else if (t === "d") root.selectedDetails()
+        else if (t === "p") projectSelector.forceActiveFocus()
         else if (t === "/" && !root.controlsBusy) searchField.forceActiveFocus()
       }
 
@@ -640,7 +651,7 @@ Panel {
           Text {
             visible: root.dockerAvailable && root.containers.length > 0
             width: parent.width
-            text: root.visibleContainers.length === 0 ? "No containers match these filters." : root.visibleContainers.length + " of " + root.containers.length + " containers shown"
+            text: root.matches.length === 0 ? "No containers match these filters." : root.matches.length + " of " + root.containers.length + " containers match"
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -685,6 +696,30 @@ Panel {
           }
 
           // ---------- Containers ----------
+          Repeater {
+            model: root.groupByCompose ? Model.projects(root.matches) : []
+            delegate: Column {
+              id: projectCard
+              required property string modelData
+              readonly property var members: root.containers.filter(function(c) { return c.project === modelData })
+              width: panelColumn.width
+              Ui.Button {
+                objectName: "dockerProject-" + projectCard.modelData
+                text: (root.filtering || root.expandedProjects.indexOf(projectCard.modelData) >= 0 ? "▾ " : "▸ ") + projectCard.modelData
+                bordered: true
+                enabled: !root.filtering
+                onClicked: root.toggleProject(projectCard.modelData)
+              }
+              Text {
+                width: parent.width
+                text: Model.projectSummary(projectCard.members)
+                wrapMode: Text.Wrap
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
           Repeater {
             model: root.visibleContainers
 
@@ -743,7 +778,7 @@ Panel {
                   Text {
                     id: nameText
                     textFormat: Text.PlainText
-                    text: containerRow.container.name
+                    text: (root.groupByCompose && containerRow.container.service ? containerRow.container.service + " / " : "") + containerRow.container.name
                     color: root.bar.foreground
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.body
@@ -775,9 +810,9 @@ Panel {
 
                 // Row 2: image
                 Text {
-                  text: containerRow.container.status + (containerRow.container.health ? " · " + containerRow.container.health : "") + " · " + containerRow.container.image + " · " + containerRow.container.id
+                  text: containerRow.container.status + " · " + (containerRow.container.health || "no healthcheck") + " · " + containerRow.container.image + " · " + containerRow.container.id
                   textFormat: Text.PlainText
-                  color: Qt.darker(root.bar.foreground, 1.6)
+                  color: containerRow.container.health === "unhealthy" ? Commons.Color.urgent : Qt.darker(root.bar.foreground, 1.6)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight

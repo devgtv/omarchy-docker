@@ -239,6 +239,16 @@ function projects(containers) {
   return containers.map(function(c) { return c.project || "" }).filter(function(p, i, list) { return p !== "" && list.indexOf(p) === i }).sort()
 }
 
+function projectSummary(rows) {
+  var running = rows.filter(function(c) { return c.status === "running" }).length
+  var parts = [running + "/" + rows.length + " running"]
+  ;["unhealthy", "starting", "healthy", ""].forEach(function(health) {
+    var n = rows.filter(function(c) { return c.status === "running" && (c.health || "") === health }).length
+    if (n) parts.push(n + " " + (health || "without healthcheck"))
+  })
+  return parts.join(" · ")
+}
+
 function selectionIndex(previous, next, index) {
   var id = previous[index] ? previous[index].fullId : ""
   for (var i = 0; i < next.length; i++) if (next[i].fullId === id) return i
@@ -376,6 +386,7 @@ if (typeof module !== "undefined") {
     inspectFormat: inspectFormat,
     visibleContainers: visibleContainers,
     projects: projects,
+    projectSummary: projectSummary,
     selectionIndex: selectionIndex,
     portsText: portsText,
     uptimeText: uptimeText,

@@ -78,6 +78,13 @@ ShellRoot {
         var card = keys.parent.parent
         mouseMove(card, card.width + 20, 10)
         var search = findChild(p, "dockerSearch")
+        verify(p.groupByCompose)
+        var shop = findChild(keys, "dockerProject-ui-shop")
+        verify(shop)
+        mouseClick(shop)
+        verify(p.expandedProjects.indexOf("ui-shop") >= 0)
+        grabImage(card).save(Quickshell.env("DOCKER_PLUGIN_UI_OUTPUT") + "/projects.png")
+        p.groupByCompose = false
         keyClick("/")
         verify(search.activeFocus)
         for (var ch of "stopped") keyClick(ch)

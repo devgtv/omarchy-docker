@@ -7,6 +7,7 @@ const b = {name: "cache", fullId: "b".repeat(64), image: "redis:7", status: "exi
 const c = {name: "worker", fullId: "c".repeat(64), image: "example/worker", status: "paused", project: "alpha", health: "unhealthy"}
 const d = {name: "standalone", fullId: "d".repeat(64), image: "busybox", status: "created", project: ""}
 const all = [a, b, c, d]
+assert.equal(Model.projectSummary([a, b, {...a, health: ""}, {...a, health: "unhealthy"}]), "3/4 running · 1 unhealthy · 1 healthy · 1 without healthcheck")
 let count = 0
 function test(name, body) { body(); count++; console.log("ok - " + name) }
 function view(query = "", state = "all", project = "", grouped = false) { return Model.visibleContainers(all, query, state, project, grouped) }

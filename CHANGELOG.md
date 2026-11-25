@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.0 (2026-11-25)
+
+- Open on a collapsible Compose overview with running and health counts, replica service names, and direct access to details and logs. `p` focuses the project selector.
+- Start existing, stop running or restart running replicas across a project, regardless of the current search. Confirm the target and affected services first.
+- See observed running and health counts per affected service after both successful and partially failed project operations.
+- Register a local Compose file for a named Docker context, discover its services and create/update the project even when no containers exist.
+
 ## 1.3.1 (2026-11-25)
 
 ### Fixed

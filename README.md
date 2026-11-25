@@ -15,7 +15,7 @@
 - Snapshots and RAM updates explicitly select their captured target, so switching the default context does not redirect an already queued update. Host URLs are not displayed, to avoid exposing embedded credentials.
 - Open the last 200 timestamped log lines in your default terminal, or follow live output. Multiple log terminals can be open independently without blocking the panel.
 - Search by name, image, ID, state, health or Compose project/service. Search is case-insensitive and literal; multiple terms are combined with AND.
-- Combine state/project filters and optionally group by Compose project. Standalone containers appear after Compose projects; these controls do not modify Docker state.
+- The default view summarizes Compose projects. Expand a project to see its replicas, or turn grouping off for a flat list. Search and filters reveal matching replicas automatically. Standalone containers remain accessible.
 - Expand Details to view health, ports, mounts, uptime, Compose labels and Docker exit/OOM/error fields. A nonzero exit code alone does not identify why a container exited.
 - Copy the container name, full ID or port mappings from Details. Clipboard support requires `wl-copy`; copy failures are reported.
 
@@ -66,6 +66,27 @@ omarchy plugin remove devgtv.docker
 - Detail metadata updates with snapshots. Published ports are distinguished from exposed-but-unpublished ports. Mount paths and runtime errors may expose sensitive information; inspect before sharing. Environment variables and healthcheck output are not collected.
 
 ## Configuration
+
+### Compose projects (v2)
+
+Discovered projects need no setup. Click a project heading to reveal replicas, or press `p` and select a project with the arrow keys and Enter. Use `j`/`k` to select a replica, `d` for details and `g` for logs. The overview counts running replicas separately from health: stopped is not unhealthy, and running without a healthcheck is not a health verdict.
+
+**Start existing**, **Stop running** and **Restart running** operate on the eligible containers from the entire project snapshot, even when search hides some replicas. The dialog identifies the project, Docker target, services and replica count. These operations use Docker container IDs; they do not create containers or apply Compose dependency ordering. After execution the panel refreshes and reports the state observed per service, alongside any Docker error.
+
+For **Create / update**, register the project in the widget entry in `~/.config/omarchy/shell.json`:
+
+```json
+{
+  "id": "devgtv.docker",
+  "composeProjects": [
+    {"context": "default", "name": "shop", "file": "/home/alex/projects/shop/compose.yaml"}
+  ]
+}
+```
+
+Use a unique project name per context and an absolute path to a trusted local Compose file. The registry matches named Docker contexts, not `DOCKER_HOST` overrides. Registered projects appear even with zero containers. **Create / update** requires the Docker Compose CLI plugin: it reads `config --services`, shows the resolved services and manifest path, then runs detached `up` with those services explicitly selected. This may build images and recreate containers. No `down` action is provided.
+
+### Refresh interval
 
 In `~/.config/omarchy/shell.json`, the widget entry accepts a custom `refreshMs`:
 

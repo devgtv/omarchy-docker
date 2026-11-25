@@ -22,11 +22,26 @@ Panel {
   property string searchQuery: ""
   property string statusFilter: "all"
   property string projectFilter: ""
-  property bool groupByCompose: false
+  property bool groupByCompose: true
+  property var expandedProjects: []
   property string expandedId: ""
   property var previousVisible: []
-  readonly property var projectList: Model.projects(containers)
-  readonly property var visibleContainers: Model.visibleContainers(containers, searchQuery, statusFilter, projectFilter, groupByCompose)
+  readonly property var registrations: Model.registrations(setting("composeProjects", []), dockerTarget)
+  readonly property var projectList: Model.projects(containers.concat(registrations.map(e => ({project: e.name}))))
+  readonly property var overviewProjects: projectList.filter(function(p) {
+    if (matches.some(c => c.project === p)) return true
+    if (!registrations.some(e => e.name === p) || containers.some(c => c.project === p)) return false
+    return statusFilter === "all" && (!projectFilter || projectFilter === p) && searchQuery.trim().toLowerCase().split(/\s+/).every(t => p.indexOf(t) >= 0)
+  })
+  readonly property var matches: Model.visibleContainers(containers, searchQuery, statusFilter, projectFilter, groupByCompose)
+  readonly property bool filtering: searchQuery.trim() !== "" || statusFilter !== "all" || projectFilter !== ""
+  readonly property var visibleContainers: matches.filter(function(c) {
+    return !groupByCompose || filtering || !c.project || expandedProjects.indexOf(c.project) >= 0
+  })
+
+  function toggleProject(name) {
+    expandedProjects = expandedProjects.indexOf(name) < 0 ? expandedProjects.concat([name]) : expandedProjects.filter(function(p) { return p !== name })
+  }
 
   // Keyboard cursor over the container list.
   property int selectedIndex: 0
@@ -51,8 +66,10 @@ Panel {
   property string actionNotice: ""
   property var pendingAction: null
   property var activeAction: null
+  property var awaitingObservation: null
+  property var preparingUp: null
   property int mutationRevision: 0
-  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || cpuProc.running || activeCpuSet !== null || actionProc.running || activeAction !== null || pendingAction !== null
+  readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || cpuProc.running || activeCpuSet !== null || actionProc.running || activeAction !== null || pendingAction !== null || configProc.running || preparingUp !== null
 
   // Floor guards against a misconfigured refreshMs (0/negative would hammer
   // the daemon in a tight timer loop).
@@ -163,7 +180,7 @@ Panel {
 
   // --memory-swap -1 allows unlimited swap; it does not disable swapping.
   function setMemory(name, mb) {
-    if (!name || !Model.validTarget(dockerTarget) || cpuProc.running || activeCpuSet !== null || actionProc.running || pendingAction !== null) return
+    if (!name || !Model.validTarget(dockerTarget) || cpuProc.running || activeCpuSet !== null || actionProc.running || pendingAction !== null || root.preparingUp) return
     var container = containers.filter(function(c) { return c.name === name })[0]
     if (!Model.validContainer(container) || container.status !== "running") return
     actionError = ""
@@ -240,7 +257,7 @@ Panel {
   }
 
   function adjustSelectedMem(deltaSteps) {
-    if (actionProc.running || cpuProc.running || activeCpuSet !== null || pendingAction !== null) return
+    if (actionProc.running || cpuProc.running || activeCpuSet !== null || pendingAction !== null || root.preparingUp) return
     if (selectedIndex < 0 || selectedIndex >= visibleContainers.length) return
     var c = visibleContainers[selectedIndex]
     if (!c || c.status !== "running") return
@@ -274,10 +291,46 @@ Panel {
     pendingAction = null
   }
 
+  function requestProject(action, name) {
+    if (controlsBusy || !dockerAvailable || refreshError) return
+    var job = Model.existingProjectJob(containers, dockerTarget, name, action)
+    if (!job) return
+    actionError = ""
+    actionNotice = ""
+    pendingAction = job
+  }
+
+  function requestUp(name) {
+    if (!opened || controlsBusy || !dockerAvailable || refreshError) return
+    var entry = registrations.filter(e => e.name === name)[0]
+    var command = Model.composeCommand(dockerTarget, entry, null)
+    if (!command.length) return
+    actionError = ""
+    actionNotice = "Reading Compose services for " + name + "…"
+    preparingUp = {entry: entry, target: dockerTarget}
+    configProc.command = command
+    configProc.running = true
+  }
+
+  function finishConfig(code, status, output, errors) {
+    var prep = preparingUp
+    preparingUp = null
+    if (!prep || !opened) return
+    actionNotice = ""
+    var services = String(output || "").trim().split(/\r?\n/)
+    var command = Model.composeCommand(prep.target, prep.entry, services)
+    if (code !== 0 || status !== 0 || !command.length) {
+      actionError = "Cannot read Compose services: " + (String(errors || "").trim() || "invalid or empty service list")
+      return
+    }
+    pendingAction = {project: prep.entry.name, name: prep.entry.name, action: "create/update", target: prep.target,
+      command: command, services: services, scope: services.join(", ") + "\n" + prep.entry.file + "\nMay create or recreate containers."}
+  }
+
   function confirmAction() {
     var job = pendingAction
     if (!job || actionProc.running) return
-    var command = Model.containerActionCommand(job.target, job.action, job.container)
+    var command = job.project ? job.command : Model.containerActionCommand(job.target, job.action, job.container)
     pendingAction = null
     if (command.length === 0) return
     activeAction = job
@@ -293,6 +346,10 @@ Panel {
     if (exitCode !== 0 || exitStatus !== 0)
       actionError = "Could not " + job.action + " " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
     else actionNotice = "Completed " + job.action + " for " + job.name
+    if (job.project) {
+      awaitingObservation = job
+      actionNotice = "Refreshing observed state for " + job.project + "…"
+    }
     Qt.callLater(root.refresh)
   }
 
@@ -363,7 +420,10 @@ Panel {
   Component.onCompleted: refresh()
 
   onOpenedChanged: {
-    if (!opened) cancelAction()
+    if (!opened) {
+      cancelAction()
+      if (preparingUp) { preparingUp = null; actionNotice = "" }
+    }
     if (opened) {
       refresh()
       selectedIndex = 0
@@ -400,7 +460,8 @@ Panel {
         root.dockerVersion = snap.dockerVersion
         if (JSON.stringify(root.dockerTarget) !== JSON.stringify(snap.target)) {
           root.memOverrides = ({})
-          root.expandedId = ""
+           root.expandedId = ""
+           root.expandedProjects = []
           root.previousVisible = []
           root.selectedIndex = 0
         }
@@ -408,6 +469,13 @@ Panel {
         root.hostMemBytes = snap.hostMemBytes
         root.hostCpuCount = snap.hostCpuCount
         root.containers = snap.containers
+        if (root.awaitingObservation && snap.dockerAvailable) {
+          var job = root.awaitingObservation
+          root.actionNotice = JSON.stringify(job.target) === JSON.stringify(snap.target)
+            ? "Observed after " + job.action + " · " + job.project + "\n" + Model.observedServices(snap.containers, job)
+            : "Docker target changed before the project result could be observed."
+          root.awaitingObservation = null
+        }
         root.pruneOverrides(snap.containers.map(function(c) { return c.name }))
       }
     }
@@ -415,8 +483,14 @@ Panel {
   }
 
   Process {
+    id: configProc
+    stdout: StdioCollector { id: serviceList; waitForEnd: true }
+    stderr: StdioCollector { id: configErrors; waitForEnd: true }
+    onExited: function(code, status) { root.finishConfig(code, status, serviceList.text, configErrors.text) }
+  }
+
+  Process {
     id: actionProc
-    stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { id: actionErrors; waitForEnd: true }
     onExited: function(exitCode, exitStatus) { root.finishAction(exitCode, exitStatus, actionErrors.text) }
   }
@@ -475,6 +549,7 @@ Panel {
         else if (t === "g") root.selectedLogs(false)
         else if (t === "G") root.selectedLogs(true)
         else if (t === "d") root.selectedDetails()
+        else if (t === "p") projectSelector.forceActiveFocus()
         else if (t === "/" && !root.controlsBusy) searchField.forceActiveFocus()
       }
 
@@ -640,7 +715,7 @@ Panel {
           Text {
             visible: root.dockerAvailable && root.containers.length > 0
             width: parent.width
-            text: root.visibleContainers.length === 0 ? "No containers match these filters." : root.visibleContainers.length + " of " + root.containers.length + " containers shown"
+            text: root.matches.length === 0 ? "No containers match these filters." : root.matches.length + " of " + root.containers.length + " containers match"
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -667,7 +742,7 @@ Panel {
             width: parent.width
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
-            text: root.actionError || root.refreshError
+            text: [root.actionError, root.refreshError].filter(Boolean).join("\n")
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body
@@ -685,6 +760,51 @@ Panel {
           }
 
           // ---------- Containers ----------
+          Repeater {
+            model: root.groupByCompose ? root.overviewProjects : []
+            delegate: Column {
+              id: projectCard
+              required property string modelData
+              readonly property var members: root.containers.filter(function(c) { return c.project === modelData })
+              width: panelColumn.width
+              Ui.Button {
+                objectName: "dockerProject-" + projectCard.modelData
+                text: (root.filtering || root.expandedProjects.indexOf(projectCard.modelData) >= 0 ? "▾ " : "▸ ") + projectCard.modelData
+                bordered: true
+                enabled: !root.filtering
+                onClicked: root.toggleProject(projectCard.modelData)
+              }
+              Text {
+                width: parent.width
+                text: projectCard.members.length ? Model.projectSummary(projectCard.members) : "Registered · no containers"
+                wrapMode: Text.Wrap
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              Flow {
+                width: parent.width
+                spacing: Style.space(4)
+                Repeater {
+                  model: ["start", "stop", "restart"]
+                  delegate: Ui.Button {
+                    required property string modelData
+                    text: modelData === "start" ? "Start existing" : modelData === "stop" ? "Stop running" : "Restart running"
+                    bordered: true
+                    enabled: !root.controlsBusy && !root.refreshError && root.dockerAvailable && projectCard.members.some(c => Model.canContainerAction(modelData, c))
+                    onClicked: root.requestProject(modelData, projectCard.modelData)
+                  }
+                }
+                Ui.Button {
+                  text: "Create / update"
+                  bordered: true
+                  visible: root.registrations.some(e => e.name === projectCard.modelData)
+                  enabled: root.dockerAvailable && !root.controlsBusy && !root.refreshError
+                  onClicked: root.requestUp(projectCard.modelData)
+                }
+              }
+            }
+          }
           Repeater {
             model: root.visibleContainers
 
@@ -743,7 +863,7 @@ Panel {
                   Text {
                     id: nameText
                     textFormat: Text.PlainText
-                    text: containerRow.container.name
+                    text: (root.groupByCompose && containerRow.container.service ? containerRow.container.service + " / " : "") + containerRow.container.name
                     color: root.bar.foreground
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.body
@@ -775,9 +895,9 @@ Panel {
 
                 // Row 2: image
                 Text {
-                  text: containerRow.container.status + (containerRow.container.health ? " · " + containerRow.container.health : "") + " · " + containerRow.container.image + " · " + containerRow.container.id
+                  text: containerRow.container.status + " · " + (containerRow.container.health || "no healthcheck") + " · " + containerRow.container.image + " · " + containerRow.container.id
                   textFormat: Text.PlainText
-                  color: Qt.darker(root.bar.foreground, 1.6)
+                  color: containerRow.container.health === "unhealthy" ? Commons.Color.urgent : Qt.darker(root.bar.foreground, 1.6)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
@@ -1090,7 +1210,7 @@ Panel {
           objectName: "dockerActionConfirm"
           anchors.fill: parent
           opened: root.pendingAction !== null
-          message: root.pendingAction ? "Confirm " + root.pendingAction.action + " for " + root.pendingAction.name + "?\n" + Model.targetLabel(root.pendingAction.target) + "\nStarting may execute the container workload; stopping or restarting may interrupt services." : ""
+          message: root.pendingAction ? "Confirm " + root.pendingAction.action + " for " + root.pendingAction.name + "?\n" + Model.targetLabel(root.pendingAction.target) + (root.pendingAction.project ? "\nProject scope: " + root.pendingAction.scope : "") + "\nStarting may execute the container workload; stopping or restarting may interrupt services." : ""
           confirmText: "Confirm"
           background: root.bar.background
           foreground: root.bar.foreground

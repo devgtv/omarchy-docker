@@ -10,7 +10,7 @@
 // Only the first five separators are structural. Metadata is JSON encoded,
 // preserving pipes, newlines and Unicode in labels, paths and error messages.
 // Project only the fields we display: never emit environment or health logs.
-var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"exposedPorts":{{json .Config.ExposedPorts}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}},"nanoCpus":{{json .HostConfig.NanoCpus}}}'
+var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json (index .NetworkSettings "Ports")}},"exposedPorts":{{json (index .Config "ExposedPorts")}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}},"nanoCpus":{{json .HostConfig.NanoCpus}}}'
 var snapshotScript = [
   // Each command is capped before command substitution can retain its output.
   // The outer command bounds time and memory for the entire process group.
@@ -239,6 +239,54 @@ function projects(containers) {
   return containers.map(function(c) { return c.project || "" }).filter(function(p, i, list) { return p !== "" && list.indexOf(p) === i }).sort()
 }
 
+function projectSummary(rows) {
+  var running = rows.filter(function(c) { return c.status === "running" }).length
+  var parts = [running + "/" + rows.length + " running"]
+  ;["unhealthy", "starting", "healthy", ""].forEach(function(health) {
+    var n = rows.filter(function(c) { return c.status === "running" && (c.health || "") === health }).length
+    if (n) parts.push(n + " " + (health || "without healthcheck"))
+  })
+  return parts.join(" · ")
+}
+
+function existingProjectJob(containers, target, name, action) {
+  if (!name || !validTarget(target)) return null
+  var members = containers.filter(function(c) { return c.project === name && canContainerAction(action, c) })
+  if (!members.length) return null
+  var services = members.map(function(c) { return c.service || c.name }).filter(function(s, i, all) { return all.indexOf(s) === i }).sort()
+  return {project: name, name: name, action: action, target: target, services: services,
+    scope: services.join(", ") + " (" + members.length + " eligible existing containers)",
+    command: dockerCommand(target, [action, "--"].concat(members.map(function(c) { return c.fullId })))}
+}
+
+function observedServices(containers, job) {
+  return job.services.map(function(s) {
+    var rows = containers.filter(function(c) { return c.project === job.project && (c.service || c.name) === s })
+    return s + ": " + (rows.length ? projectSummary(rows) : "no containers observed")
+  }).join("\n")
+}
+
+// Local, explicitly registered manifests only. Docker labels are not a
+// source of trusted workstation paths, especially for a remote daemon.
+function registrations(entries, target) {
+  if (!Array.isArray(entries) || !validTarget(target) || target.kind !== "context") return []
+  var scoped = entries.filter(function(e) { return e && e.context === target.value })
+  return scoped.filter(function(e) {
+    return typeof e.name === "string" && /^[a-z0-9][a-z0-9_-]*$/.test(e.name)
+      && typeof e.file === "string" && e.file[0] === "/" && !/[\x00-\x1f\x7f]/.test(e.file)
+      && scoped.filter(function(other) { return other.name === e.name }).length === 1
+  })
+}
+
+function composeCommand(target, entry, services) {
+  if (!registrations([entry], target).length) return []
+  var args = ["compose", "--progress", "quiet", "--project-name", entry.name, "--file", entry.file]
+  if (services === null) return dockerCommand(target, args.concat(["config", "--services"]))
+  if (!Array.isArray(services) || !services.length || services.length > 128
+      || !services.every(function(s) { return /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(s) })) return []
+  return dockerCommand(target, args.concat(["up", "--detach", "--no-deps", "--"], services))
+}
+
 function selectionIndex(previous, next, index) {
   var id = previous[index] ? previous[index].fullId : ""
   for (var i = 0; i < next.length; i++) if (next[i].fullId === id) return i
@@ -376,6 +424,11 @@ if (typeof module !== "undefined") {
     inspectFormat: inspectFormat,
     visibleContainers: visibleContainers,
     projects: projects,
+    projectSummary: projectSummary,
+    existingProjectJob: existingProjectJob,
+    observedServices: observedServices,
+    registrations: registrations,
+    composeCommand: composeCommand,
     selectionIndex: selectionIndex,
     portsText: portsText,
     uptimeText: uptimeText,

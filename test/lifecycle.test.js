@@ -224,6 +224,34 @@ async function main() {
     ok("stopped containers retain readable logs and do not receive resource stats")
     action("start", created[0])
     ok("an exited container can be started again through the controller")
+
+    if (target.kind === "context") {
+      const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "compose v2-"))
+      const entry = {context: target.value, name: "v2-" + runId, file: path.join(dir, "compose.yaml")}
+      fs.writeFileSync(entry.file, JSON.stringify({services: {api: {image, network_mode: "none",
+        labels: {[label]: runId}, command: ["sleep", "300"], cap_drop: ["ALL"]}}}))
+      try {
+        const services = exec(Model.composeCommand(target, entry, null)).trim().split("\n")
+        assert.deepEqual(services, ["api"])
+        exec(Model.composeCommand(target, entry, services))
+        const rows = snapshot().containers
+        const replica = rows.find(c => c.project === entry.name)
+        assert(replica && replica.status === "running")
+        const job = Model.existingProjectJob(rows, target, entry.name, "restart")
+        assert.deepEqual(job.command.slice(-2), ["--", replica.fullId])
+        const otherStart = inspect(created[0]).State.StartedAt
+        const before = inspect(replica.fullId).State.StartedAt
+        exec(job.command)
+        assert.notEqual(inspect(replica.fullId).State.StartedAt, before)
+        assert.equal(inspect(created[0]).State.StartedAt, otherStart)
+        ok("registered empty Compose project starts and restarts independently")
+      } finally {
+        const ids = docker(["ps", "-aq", "--no-trunc", "--filter", "label=" + label + "=" + runId,
+          "--filter", "label=com.docker.compose.project=" + entry.name]).trim()
+        if (ids) created.push(...ids.split("\n"))
+        fs.rmSync(dir, {recursive: true, force: true})
+      }
+    }
   } finally {
     for (const id of created) {
       owned(id)

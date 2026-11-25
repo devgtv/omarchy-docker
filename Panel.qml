@@ -283,10 +283,19 @@ Panel {
     pendingAction = null
   }
 
+  function requestProject(action, name) {
+    if (controlsBusy || !dockerAvailable || refreshError) return
+    var job = Model.existingProjectJob(containers, dockerTarget, name, action)
+    if (!job) return
+    actionError = ""
+    actionNotice = ""
+    pendingAction = job
+  }
+
   function confirmAction() {
     var job = pendingAction
     if (!job || actionProc.running) return
-    var command = Model.containerActionCommand(job.target, job.action, job.container)
+    var command = job.project ? job.command : Model.containerActionCommand(job.target, job.action, job.container)
     pendingAction = null
     if (command.length === 0) return
     activeAction = job
@@ -718,6 +727,20 @@ Panel {
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
               }
+              Flow {
+                width: parent.width
+                spacing: Style.space(4)
+                Repeater {
+                  model: ["start", "stop", "restart"]
+                  delegate: Ui.Button {
+                    required property string modelData
+                    text: modelData === "start" ? "Start existing" : modelData === "stop" ? "Stop running" : "Restart running"
+                    bordered: true
+                    enabled: !root.controlsBusy && !root.refreshError && root.dockerAvailable && projectCard.members.some(c => Model.canContainerAction(modelData, c))
+                    onClicked: root.requestProject(modelData, projectCard.modelData)
+                  }
+                }
+              }
             }
           }
           Repeater {
@@ -1125,7 +1148,7 @@ Panel {
           objectName: "dockerActionConfirm"
           anchors.fill: parent
           opened: root.pendingAction !== null
-          message: root.pendingAction ? "Confirm " + root.pendingAction.action + " for " + root.pendingAction.name + "?\n" + Model.targetLabel(root.pendingAction.target) + "\nStarting may execute the container workload; stopping or restarting may interrupt services." : ""
+          message: root.pendingAction ? "Confirm " + root.pendingAction.action + " for " + root.pendingAction.name + "?\n" + Model.targetLabel(root.pendingAction.target) + (root.pendingAction.project ? "\nProject scope: " + root.pendingAction.scope : "") + "\nStarting may execute the container workload; stopping or restarting may interrupt services." : ""
           confirmText: "Confirm"
           background: root.bar.background
           foreground: root.bar.foreground

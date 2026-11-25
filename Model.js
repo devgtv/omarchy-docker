@@ -249,6 +249,16 @@ function projectSummary(rows) {
   return parts.join(" · ")
 }
 
+function existingProjectJob(containers, target, name, action) {
+  if (!name || !validTarget(target)) return null
+  var members = containers.filter(function(c) { return c.project === name && canContainerAction(action, c) })
+  if (!members.length) return null
+  var services = members.map(function(c) { return c.service || c.name }).filter(function(s, i, all) { return all.indexOf(s) === i }).sort()
+  return {project: name, name: name, action: action, target: target, services: services,
+    scope: services.join(", ") + " (" + members.length + " eligible existing containers)",
+    command: dockerCommand(target, [action, "--"].concat(members.map(function(c) { return c.fullId })))}
+}
+
 function selectionIndex(previous, next, index) {
   var id = previous[index] ? previous[index].fullId : ""
   for (var i = 0; i < next.length; i++) if (next[i].fullId === id) return i
@@ -387,6 +397,7 @@ if (typeof module !== "undefined") {
     visibleContainers: visibleContainers,
     projects: projects,
     projectSummary: projectSummary,
+    existingProjectJob: existingProjectJob,
     selectionIndex: selectionIndex,
     portsText: portsText,
     uptimeText: uptimeText,

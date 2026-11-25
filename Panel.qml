@@ -26,7 +26,13 @@ Panel {
   property var expandedProjects: []
   property string expandedId: ""
   property var previousVisible: []
-  readonly property var projectList: Model.projects(containers)
+  readonly property var registrations: Model.registrations(setting("composeProjects", []), dockerTarget)
+  readonly property var projectList: Model.projects(containers.concat(registrations.map(e => ({project: e.name}))))
+  readonly property var overviewProjects: projectList.filter(function(p) {
+    if (matches.some(c => c.project === p)) return true
+    if (!registrations.some(e => e.name === p) || containers.some(c => c.project === p)) return false
+    return statusFilter === "all" && (!projectFilter || projectFilter === p) && searchQuery.trim().toLowerCase().split(/\s+/).every(t => p.indexOf(t) >= 0)
+  })
   readonly property var matches: Model.visibleContainers(containers, searchQuery, statusFilter, projectFilter, groupByCompose)
   readonly property bool filtering: searchQuery.trim() !== "" || statusFilter !== "all" || projectFilter !== ""
   readonly property var visibleContainers: matches.filter(function(c) {
@@ -718,7 +724,7 @@ Panel {
 
           // ---------- Containers ----------
           Repeater {
-            model: root.groupByCompose ? Model.projects(root.matches) : []
+            model: root.groupByCompose ? root.overviewProjects : []
             delegate: Column {
               id: projectCard
               required property string modelData
@@ -733,7 +739,7 @@ Panel {
               }
               Text {
                 width: parent.width
-                text: Model.projectSummary(projectCard.members)
+                text: projectCard.members.length ? Model.projectSummary(projectCard.members) : "Registered · no containers"
                 wrapMode: Text.Wrap
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily

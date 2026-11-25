@@ -8,6 +8,10 @@ const c = {name: "worker", fullId: "c".repeat(64), image: "example/worker", stat
 const d = {name: "standalone", fullId: "d".repeat(64), image: "busybox", status: "created", project: ""}
 const all = [a, b, c, d]
 const target = {kind: "context", value: "demo"}
+const entry = {name: "empty", context: "demo", file: "/home/test/empty project/compose.yml"}
+assert.deepEqual(Model.registrations([entry, {...entry, context: "other"}, {...entry, name: "invalid", file: "relative"}], target), [entry])
+assert.deepEqual(Model.registrations([entry, entry], target), [])
+assert.deepEqual(Model.registrations([entry], {...target, kind: "host"}), [])
 const job = Model.existingProjectJob([a, b, c, {...a, project: "other", fullId: d.fullId}], target, "shop", "restart")
 assert.deepEqual(job.command, Model.dockerCommand(target, ["restart", "--", a.fullId]))
 assert.deepEqual(job.services, ["backend"])

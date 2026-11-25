@@ -266,6 +266,18 @@ function observedServices(containers, job) {
   }).join("\n")
 }
 
+// Local, explicitly registered manifests only. Docker labels are not a
+// source of trusted workstation paths, especially for a remote daemon.
+function registrations(entries, target) {
+  if (!Array.isArray(entries) || !validTarget(target) || target.kind !== "context") return []
+  var scoped = entries.filter(function(e) { return e && e.context === target.value })
+  return scoped.filter(function(e) {
+    return typeof e.name === "string" && /^[a-z0-9][a-z0-9_-]*$/.test(e.name)
+      && typeof e.file === "string" && e.file[0] === "/" && !/[\x00-\x1f\x7f]/.test(e.file)
+      && scoped.filter(function(other) { return other.name === e.name }).length === 1
+  })
+}
+
 function selectionIndex(previous, next, index) {
   var id = previous[index] ? previous[index].fullId : ""
   for (var i = 0; i < next.length; i++) if (next[i].fullId === id) return i
@@ -406,6 +418,7 @@ if (typeof module !== "undefined") {
     projectSummary: projectSummary,
     existingProjectJob: existingProjectJob,
     observedServices: observedServices,
+    registrations: registrations,
     selectionIndex: selectionIndex,
     portsText: portsText,
     uptimeText: uptimeText,

@@ -10,7 +10,7 @@
 // Only the first five separators are structural. Metadata is JSON encoded,
 // preserving pipes, newlines and Unicode in labels, paths and error messages.
 // Project only the fields we display: never emit environment or health logs.
-var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json .NetworkSettings.Ports}},"exposedPorts":{{json .Config.ExposedPorts}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}},"nanoCpus":{{json .HostConfig.NanoCpus}}}'
+var inspectFormat = '{{.Id}}|{{.Name}}|{{.Config.Image}}|{{.State.Status}}|{{.HostConfig.Memory}}|{"health":{{with index .State "Health"}}{{json .Status}}{{else}}""{{end}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"ports":{{json (index .NetworkSettings "Ports")}},"exposedPorts":{{json (index .Config "ExposedPorts")}},"mounts":{{json .Mounts}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"exitCode":{{json .State.ExitCode}},"oomKilled":{{json .State.OOMKilled}},"error":{{json .State.Error}},"nanoCpus":{{json .HostConfig.NanoCpus}}}'
 var snapshotScript = [
   // Each command is capped before command substitution can retain its output.
   // The outer command bounds time and memory for the entire process group.

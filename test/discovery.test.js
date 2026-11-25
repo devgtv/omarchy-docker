@@ -11,6 +11,7 @@ const target = {kind: "context", value: "demo"}
 const job = Model.existingProjectJob([a, b, c, {...a, project: "other", fullId: d.fullId}], target, "shop", "restart")
 assert.deepEqual(job.command, Model.dockerCommand(target, ["restart", "--", a.fullId]))
 assert.deepEqual(job.services, ["backend"])
+assert.equal(Model.observedServices([a, {...a, status: "exited"}, {...a, project: "other"}], {...job, services: ["backend", "missing"]}), "backend: 1/2 running · 1 healthy\nmissing: no containers observed")
 assert.equal(Model.existingProjectJob(all, target, "", "restart"), null)
 assert.equal(Model.existingProjectJob(all, target, "shop", "down"), null)
 assert.equal(Model.projectSummary([a, b, {...a, health: ""}, {...a, health: "unhealthy"}]), "3/4 running · 1 unhealthy · 1 healthy · 1 without healthcheck")

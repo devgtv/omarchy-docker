@@ -60,6 +60,7 @@ Panel {
   property string actionNotice: ""
   property var pendingAction: null
   property var activeAction: null
+  property var awaitingObservation: null
   property int mutationRevision: 0
   readonly property bool controlsBusy: userInteracting || memDebounce.running || setProc.running || activeSet !== null || pendingSets.length > 0 || cpuProc.running || activeCpuSet !== null || actionProc.running || activeAction !== null || pendingAction !== null
 
@@ -311,6 +312,10 @@ Panel {
     if (exitCode !== 0 || exitStatus !== 0)
       actionError = "Could not " + job.action + " " + job.name + ": " + (String(errorText || "").trim() || "Docker exited with code " + exitCode)
     else actionNotice = "Completed " + job.action + " for " + job.name
+    if (job.project) {
+      awaitingObservation = job
+      actionNotice = "Refreshing observed state for " + job.project + "…"
+    }
     Qt.callLater(root.refresh)
   }
 
@@ -427,6 +432,13 @@ Panel {
         root.hostMemBytes = snap.hostMemBytes
         root.hostCpuCount = snap.hostCpuCount
         root.containers = snap.containers
+        if (root.awaitingObservation && snap.dockerAvailable) {
+          var job = root.awaitingObservation
+          root.actionNotice = JSON.stringify(job.target) === JSON.stringify(snap.target)
+            ? "Observed after " + job.action + " · " + job.project + "\n" + Model.observedServices(snap.containers, job)
+            : "Docker target changed before the project result could be observed."
+          root.awaitingObservation = null
+        }
         root.pruneOverrides(snap.containers.map(function(c) { return c.name }))
       }
     }
@@ -687,7 +699,7 @@ Panel {
             width: parent.width
             wrapMode: Text.Wrap
             textFormat: Text.PlainText
-            text: root.actionError || root.refreshError
+            text: [root.actionError, root.refreshError].filter(Boolean).join("\n")
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.body

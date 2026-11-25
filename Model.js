@@ -259,6 +259,13 @@ function existingProjectJob(containers, target, name, action) {
     command: dockerCommand(target, [action, "--"].concat(members.map(function(c) { return c.fullId })))}
 }
 
+function observedServices(containers, job) {
+  return job.services.map(function(s) {
+    var rows = containers.filter(function(c) { return c.project === job.project && (c.service || c.name) === s })
+    return s + ": " + (rows.length ? projectSummary(rows) : "no containers observed")
+  }).join("\n")
+}
+
 function selectionIndex(previous, next, index) {
   var id = previous[index] ? previous[index].fullId : ""
   for (var i = 0; i < next.length; i++) if (next[i].fullId === id) return i
@@ -398,6 +405,7 @@ if (typeof module !== "undefined") {
     projects: projects,
     projectSummary: projectSummary,
     existingProjectJob: existingProjectJob,
+    observedServices: observedServices,
     selectionIndex: selectionIndex,
     portsText: portsText,
     uptimeText: uptimeText,
